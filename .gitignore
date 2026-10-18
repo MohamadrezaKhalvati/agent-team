@@ -1,3 +1,23 @@
-
+# Private monitor runtime and scratch work
 .team-monitor/
 work/
+
+# Dependencies and generated artifacts
+node_modules/
+coverage/
+dist/
+*.zip
+*.tar.gz
+
+# Local credentials and environment configuration
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Local logs and editor/OS files
+*.log
+.DS_Store
+.idea/
+.vscode/
