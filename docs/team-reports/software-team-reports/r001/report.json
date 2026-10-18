@@ -1,0 +1,196 @@
+{
+  "schemaVersion": 1,
+  "jobId": "software-team-reports",
+  "revision": 1,
+  "runId": "reports-v3",
+  "codeVersion": "cdf16c852ac4a5b556a79aa70717fb53d3482e36",
+  "dirtyWorktree": false,
+  "technicalStatus": "implemented",
+  "releaseStatus": "not-released",
+  "reviewStatus": "independent",
+  "title": {
+    "en": "Software Team 0.3.0 — bilingual technical reporting",
+    "fa": "Software Team 0.3.0 — گزارش‌دهی فنی دوزبانه"
+  },
+  "summary": {
+    "en": "Implemented full English/Persian report packages, visualizations, safe monitor links and preserved revision continuity. Automated and independent structural checks passed. This first report is the browser-validation handoff; final visual checks remain pending.",
+    "fa": "بسته گزارش کامل انگلیسی و فارسی، نمودارها، لینک امن در مانیتور و تداوم دورهای اصلاح پیاده‌سازی شد. بررسی‌های ساختاری خودکار و مستقل موفق‌اند. این گزارش نخست برای بررسی در مرورگر تحویل می‌شود و بررسی نهایی بصری هنوز باقی است."
+  },
+  "requirements": [
+    {
+      "id": "REQ-1",
+      "text": {
+        "en": "Generate full Persian and English technical reports and diagrams.",
+        "fa": "تولید گزارش فنی کامل فارسی و انگلیسی همراه نمودارها."
+      },
+      "status": "met",
+      "evidenceIds": [
+        "CHECK-TESTS",
+        "CHECK-REVIEW"
+      ]
+    },
+    {
+      "id": "REQ-2",
+      "text": {
+        "en": "Preserve prior reports and link a new revision to its parent with a fresh run.",
+        "fa": "حفظ گزارش‌های پیشین و اتصال دور اصلاح جدید با اجرای تازه به گزارش والد."
+      },
+      "status": "met",
+      "evidenceIds": [
+        "CHECK-TESTS"
+      ]
+    },
+    {
+      "id": "REQ-3",
+      "text": {
+        "en": "Expose valid report links in the live dashboard and verify browser presentation.",
+        "fa": "نمایش لینک معتبر گزارش در داشبورد زنده و بررسی نمایش در مرورگر."
+      },
+      "status": "partial",
+      "evidenceIds": [
+        "CHECK-TESTS",
+        "CHECK-BROWSER"
+      ]
+    },
+    {
+      "id": "REQ-4",
+      "text": {
+        "en": "Specify comprehensive evidence-based content and a user-feedback continuation workflow.",
+        "fa": "تعریف محتوای جامع مبتنی بر شواهد و روند ادامه کار براساس بازخورد کاربر."
+      },
+      "status": "met",
+      "evidenceIds": [
+        "CHECK-REVIEW"
+      ]
+    }
+  ],
+  "evidence": [
+    {
+      "id": "CHECK-TESTS",
+      "label": {
+        "en": "Sixteen automated integration checks passed",
+        "fa": "شانزده بررسی یکپارچه خودکار موفق شدند"
+      },
+      "status": "passed",
+      "method": {
+        "en": "Executed Node tests for the monitor and report builder; independent reviewer reran the same suite and confirmed 16/16 passing.",
+        "fa": "تست‌های Node برای مانیتور و گزارش‌ساز اجرا شدند؛ بازبین مستقل نیز همان مجموعه را اجرا کرد و موفقیت ۱۶ مورد از ۱۶ مورد را تأیید کرد."
+      },
+      "reference": "node --test software-team/skills/software-team/scripts/monitor/monitor.test.mjs software-team/skills/software-team/scripts/reports/report.test.mjs"
+    },
+    {
+      "id": "CHECK-REVIEW",
+      "label": {
+        "en": "Independent structural/security review and retest",
+        "fa": "بازبینی مستقل ساختاری و امنیتی و آزمون مجدد"
+      },
+      "status": "passed",
+      "method": {
+        "en": "monitor_review inspected the actual changes and independently reproduced and retested fixes for directory confinement before mutation, complete-package publication, and distinct parent/current run identities. Browser rendering and semantic translation were outside that review.",
+        "fa": "عامل monitor_review تغییرهای واقعی را بررسی کرد و رفع مشکلات محدوده پوشه پیش از تغییر، انتشار بسته کامل و تفاوت اجرای والد و جاری را مستقلاً بازتولید و دوباره آزمایش کرد. نمایش مرورگر و معنای ترجمه در دامنه آن بازبینی نبود."
+      },
+      "reference": "Independent reviewer handoff for version 0.3.0; regression cases in report.test.mjs and monitor.test.mjs"
+    },
+    {
+      "id": "CHECK-BROWSER",
+      "label": {
+        "en": "Actual browser verification",
+        "fa": "بررسی در مرورگر واقعی"
+      },
+      "status": "not-run",
+      "method": {
+        "en": "Pending: open this report, inspect full English and RTL Persian content, diagram and dashboard links, and check mobile layout.",
+        "fa": "در انتظار اجرا: بازکردن این گزارش، بررسی محتوای کامل انگلیسی و فارسی راست‌به‌چپ، نمودار و لینک‌های داشبورد و نمای موبایل."
+      },
+      "reference": "Pending browser checks for this report revision"
+    }
+  ],
+  "sections": {
+    "changes": {
+      "en": "Added scripts/reports/report.mjs, report.test.mjs, assets/report-input.example.json and references/JOB-REPORTS.md. Updated the coordinator skill, operating contract, monitor server/UI, manifests, README and changelog. A completed delivery now includes HTML, two Markdown files, a shared JSON record and two SVG diagrams. No changes were made to an application business backend.",
+      "fa": "فایل‌های scripts/reports/report.mjs، report.test.mjs، assets/report-input.example.json و references/JOB-REPORTS.md اضافه شدند. مهارت هماهنگ‌کننده، قرارداد، سرور و رابط مانیتور، مانیفست‌ها، README و تاریخچه نسخه اصلاح شدند. تحویل کار اکنون شامل HTML، دو فایل Markdown، رکورد مشترک JSON و دو نمودار SVG است. بک‌اند کسب‌وکار هیچ اپلیکیشنی تغییر نکرده است."
+    },
+    "architecture": {
+      "en": "The coordinator prepares one bilingual structured record. The dependency-free Node builder validates IDs, status, evidence references and parent identity, then writes a new revision atomically. The monitor publishes only complete report packages whose identity matches the run. Its allowlisted report routes remain inside the project report root. The HTML is standalone, script-free and contains both languages, acceptance meters and inline SVG; Markdown uses local SVG assets.",
+      "fa": "هماهنگ‌کننده یک رکورد ساختاریافته دوزبانه آماده می‌کند. گزارش‌ساز Node بدون وابستگی، شناسه‌ها، وضعیت، ارجاع شواهد و هویت والد را بررسی می‌کند و سپس یک دور جدید را به‌صورت اتمیک می‌نویسد. مانیتور فقط بسته کامل با هویت منطبق بر اجرا را منتشر می‌کند. مسیرهای مجاز گزارش در محدوده پوشه گزارش پروژه باقی می‌مانند. HTML مستقل و بدون اسکریپت است و هر دو زبان، سنجه پذیرش و SVG درون‌صفحه‌ای دارد؛ Markdown از SVG محلی استفاده می‌کند."
+    },
+    "decisions": {
+      "en": "DEC-1: use one factual record with bilingual narrative to preserve IDs, statuses and references across languages. DEC-2: keep prior revisions instead of overwriting them, accepting some duplicated narrative for review traceability. DEC-3: use a small local renderer and SVG rather than a server dependency or chart framework. DEC-4: keep user acceptance pending and distinguish technical completion, independent review and release. Validation does not establish factual truth or semantic translation equivalence.",
+      "fa": "DEC-1: استفاده از یک رکورد واقعی با متن دوزبانه برای حفظ شناسه، وضعیت و ارجاع‌ها میان زبان‌ها. DEC-2: نگه‌داشتن دورهای قبل به‌جای بازنویسی آن‌ها؛ مقداری تکرار متن برای قابلیت پیگیری پذیرفته شده است. DEC-3: استفاده از گزارش‌ساز محلی کوچک و SVG به‌جای وابستگی سرور یا چارچوب نمودار. DEC-4: پذیرش کاربر در انتظار می‌ماند و اتمام فنی، بازبینی مستقل و انتشار تفکیک می‌شوند. اعتبارسنجی ساختار، صحت ادعاها یا برابری معنایی ترجمه را ثابت نمی‌کند."
+    },
+    "review": {
+      "en": "Reviewer: monitor_review. Three P2 findings were corrected: an escaping docs symlink caused directory creation before rejection; incomplete packages could be published; a new revision could reuse its parent run. Added regression coverage and obtained an independent retest with no remaining blockers in the reviewed paths. Coordinator still owns narrative accuracy and browser checks.",
+      "fa": "بازبین: monitor_review. سه یافته P2 رفع شد: لینک نمادین docs به بیرون باعث ایجاد پوشه پیش از رد درخواست می‌شد؛ بسته ناقص قابل انتشار بود؛ و دور جدید می‌توانست از اجرای والد استفاده کند. تست جلوگیری از بازگشت اضافه شد و بازبین مستقل رفع مشکلات را بدون مانع باقی‌مانده در مسیرهای بررسی‌شده تأیید کرد. صحت متن و بررسی مرورگر همچنان مسئولیت هماهنگ‌کننده است."
+    },
+    "risks": {
+      "en": "RISK-1: a fresh feature executed through the updated installed plugin has not yet been tested; local source and package checks do not prove future host compliance. RISK-2: the renderer cannot validate factual truth or translation semantics. RISK-3: the monitor retains full history in memory and is scoped to bounded local runs. RISK-4: browser and full accessibility verification remain pending in this revision. No application database migration or production infrastructure change is involved.",
+      "fa": "RISK-1: اجرای یک فیچر تازه از طریق پلاگین نصب‌شده به‌روز هنوز آزمایش نشده است؛ بررسی سورس محلی و بسته، اجرای درست میزبان در آینده را ثابت نمی‌کند. RISK-2: گزارش‌ساز نمی‌تواند صحت ادعا یا معنای ترجمه را تأیید کند. RISK-3: مانیتور کل تاریخچه را در حافظه نگه می‌دارد و برای اجرای محلی محدود است. RISK-4: بررسی مرورگر و ارزیابی کامل دسترس‌پذیری در این دور باقی است. مهاجرت دیتابیس اپلیکیشن یا تغییر زیرساخت تولید در کار نیست."
+    },
+    "operations": {
+      "en": "Requires Node.js 20+; no npm installation. Start scripts/monitor/monitor.mjs with --project and --port. Generate reports using scripts/reports/report.mjs --input <input.json> --project <project>. Outputs go to docs/team-reports/<job>/rNNN. Preserve existing revisions; publish report.ready only after content review. Stop/restart the monitor gracefully to load server changes and retain events.jsonl. No production release is performed by this report.",
+      "fa": "به Node.js نسخه ۲۰ یا جدیدتر نیاز دارد و نصب npm لازم نیست. scripts/monitor/monitor.mjs را با --project و --port اجرا کنید. گزارش با scripts/reports/report.mjs --input <input.json> --project <project> ساخته می‌شود. خروجی در docs/team-reports/<job>/rNNN قرار می‌گیرد. دورهای موجود حفظ شوند و report.ready فقط پس از بررسی محتوا منتشر شود. برای بارگذاری تغییر سرور، مانیتور را به‌صورت کنترل‌شده بازراه‌اندازی و events.jsonl را حفظ کنید. این گزارش هیچ انتشار تولیدی انجام نمی‌دهد."
+    },
+    "nextSteps": {
+      "en": "ACTION-1: finish actual browser checks and issue a new report revision with their outcomes. ACTION-2: package and save the private 0.3.0 plugin, then verify saved files. ACTION-3: user reviews the report and supplies requested changes by requirement/finding ID. Optional follow-up: validate one real feature through a fresh installed-plugin chat; this is not silently included in the current job.",
+      "fa": "ACTION-1: بررسی مرورگر واقعی تکمیل و دور جدید گزارش با نتیجه آن صادر شود. ACTION-2: نسخه خصوصی 0.3.0 بسته‌بندی و ذخیره و فایل‌های ذخیره‌شده بررسی شوند. ACTION-3: کاربر گزارش را بررسی و اصلاحات را با شناسه نیازمندی یا یافته اعلام کند. پیگیری اختیاری: آزمایش یک فیچر واقعی در چت تازه با پلاگین نصب‌شده؛ این کار پنهانی به دامنه فعلی اضافه نشده است."
+    },
+    "revisionContext": {
+      "en": "First report revision for the requested 0.3.0 reporting feature. Source snapshot is commit cdf16c852ac4a5b556a79aa70717fb53d3482e36. Request and acceptance context are in the current user conversation; reusable rules are in OPERATING-CONTRACT.md section 8.1 and JOB-REPORTS.md. Next revision must use a fresh run, reference reports-v3 as parent and preserve this report.",
+      "fa": "نخستین دور گزارش برای قابلیت گزارش‌دهی نسخه 0.3.0 درخواستی است. نسخه سورس، commit cdf16c852ac4a5b556a79aa70717fb53d3482e36 است. زمینه درخواست و پذیرش در گفتگوی جاری است؛ قواعد قابل استفاده مجدد در بخش 8.1 قرارداد و JOB-REPORTS.md ثبت شده‌اند. دور بعد باید اجرای تازه داشته باشد، reports-v3 را والد معرفی و این گزارش را حفظ کند."
+    }
+  },
+  "diagram": {
+    "kind": "current",
+    "caption": {
+      "en": "Implemented reporting flow: one shared record creates a preserved bilingual package, which the live monitor exposes for review.",
+      "fa": "جریان پیاده‌شده گزارش‌دهی: یک رکورد مشترک، بسته دوزبانه حفظ‌شده می‌سازد و مانیتور زنده آن را برای بررسی نشان می‌دهد."
+    },
+    "nodes": [
+      {
+        "id": "record",
+        "label": {
+          "en": "Bilingual record + evidence",
+          "fa": "رکورد دوزبانه و شواهد"
+        }
+      },
+      {
+        "id": "builder",
+        "label": {
+          "en": "Validate and preserve revision",
+          "fa": "اعتبارسنجی و حفظ دور گزارش"
+        }
+      },
+      {
+        "id": "files",
+        "label": {
+          "en": "HTML · EN / FA · JSON · SVG",
+          "fa": "HTML · EN / FA · JSON · SVG"
+        }
+      },
+      {
+        "id": "monitor",
+        "label": {
+          "en": "Monitor links → user review",
+          "fa": "لینک مانیتور و بررسی کاربر"
+        }
+      }
+    ],
+    "edges": [
+      {
+        "from": "record",
+        "to": "builder"
+      },
+      {
+        "from": "builder",
+        "to": "files"
+      },
+      {
+        "from": "files",
+        "to": "monitor"
+      }
+    ]
+  },
+  "generatedAt": "2026-10-18T10:44:42.563Z",
+  "inputSha256": "67fe5b58c2b3e1d999a9ee045bbdc3efd35a22bb1fa6c453cde9cec7fdc8d37d",
+  "userAcceptance": "pending"
+}
