@@ -1,13 +1,14 @@
 #!/usr/bin/env node
 import http from 'node:http';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
-import { mkdirSync, readFileSync, writeFileSync, appendFileSync, existsSync, chmodSync, openSync, closeSync, unlinkSync } from 'node:fs';
-import { resolve, dirname, join } from 'node:path';
+import { mkdirSync, readFileSync, writeFileSync, appendFileSync, existsSync, chmodSync, openSync, closeSync, unlinkSync, realpathSync } from 'node:fs';
+import { resolve, dirname, join, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
+import { validateReport } from '../reports/report.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const TYPES = new Set(['run.started','run.updated','run.finished','agent.updated','task.updated','message.sent','decision.recorded','evidence.recorded','command.started','command.finished']);
+const TYPES = new Set(['run.started','run.updated','run.finished','agent.updated','task.updated','message.sent','decision.recorded','evidence.recorded','report.ready','command.started','command.finished']);
 const TASK_STATES = new Set(['planned','running','blocked','review','verified','released']);
 const AGENT_STATES = new Set(['working','waiting','done','blocked']);
 const RUN_STATES = new Set(['running','blocked','review','verified','failed','finished']);
@@ -34,7 +35,15 @@ export function validate(input, source='agent-reported') {
   if (out.type==='run.updated' && !RUN_STATES.has(out.status)) fail('Valid run status required');
   if (out.type==='run.finished' && !RUN_STATES.has(out.status)) fail('Final run status required');
   if (['decision.recorded','evidence.recorded'].includes(out.type) && !out.title) fail('Title required');
+  if (out.type==='report.ready' && (!out.title || !/^\/reports\/[A-Za-z0-9][A-Za-z0-9_-]{0,79}\/r[0-9]{3,4}\/report\.html$/.test(out.path || ''))) fail('Report title and safe report path required');
   return out;
+}
+function reportFile(project, reportPath) {
+  if(!/^\/reports\/[A-Za-z0-9][A-Za-z0-9_-]{0,79}\/r[0-9]{3,4}\/(report\.html|report\.en\.md|report\.fa\.md|report\.json|diagram\.en\.svg|diagram\.fa\.svg)$/.test(reportPath)) fail('Invalid report path');
+  const projectRoot=realpathSync(project), root=realpathSync(join(projectRoot,'docs','team-reports'));
+  const target=realpathSync(join(root,reportPath.slice('/reports/'.length)));
+  if(!root.startsWith(projectRoot+sep) || !target.startsWith(root+sep)) fail('Report path outside project');
+  return target;
 }
 export async function startMonitor({project=process.cwd(),port=4317}={}) {
   project=resolve(project);
@@ -94,12 +103,30 @@ async function startUnlocked({project,port}) {
         const value=validate(JSON.parse(text),source);
         if(value.type==='run.started' && events.some(e=>e.runId===value.runId)) fail('Run already exists');
         if(value.type!=='run.started' && !events.some(e=>e.type==='run.started' && e.runId===value.runId)) fail('Run does not exist');
+        if(value.type==='report.ready') {
+          for(const name of ['report.html','report.json','report.en.md','report.fa.md','diagram.en.svg','diagram.fa.svg']) reportFile(project,value.path.replace('report.html',name));
+          const record=JSON.parse(readFileSync(reportFile(project,value.path.replace('report.html','report.json')),'utf8'));
+          validateReport(record);
+          const parts=value.path.split('/');
+          if(record.runId!==value.runId || record.jobId!==parts[2] || `r${String(record.revision).padStart(3,'0')}`!==parts[3]) fail('Report identity does not match event');
+        }
         const event={...value,seq:events.length+1,at:new Date().toISOString()};
         appendFileSync(journal,JSON.stringify(event)+'\n',{mode:0o600}); events.push(event);
         for(const client of clients)send(client,'update',event);
         res.writeHead(201,{'Content-Type':'application/json'}).end(JSON.stringify(event));
       } catch(error){res.writeHead(400,{'Content-Type':'application/json'}).end(JSON.stringify({error:error.message}));}
       return;
+    }
+    const reportMatch=path.match(/^\/reports\/([A-Za-z0-9][A-Za-z0-9_-]{0,79})\/(r[0-9]{3,4})\/(report\.html|report\.en\.md|report\.fa\.md|report\.json|diagram\.en\.svg|diagram\.fa\.svg)$/);
+    if(req.method==='GET' && reportMatch){
+      try {
+        const target=reportFile(project,path);
+        const filename=reportMatch[3];
+        const type=filename.endsWith('.html')?'text/html; charset=utf-8':filename.endsWith('.svg')?'image/svg+xml':filename.endsWith('.json')?'application/json':'text/plain; charset=utf-8';
+        res.setHeader('Content-Type',type);
+        res.setHeader('Content-Security-Policy',"default-src 'none'; style-src 'unsafe-inline'; img-src data:; frame-ancestors 'none'; base-uri 'none'; form-action 'none'");
+        res.end(readFileSync(target));
+      }catch{res.writeHead(404).end('Report not found');}return;
     }
     const files={'/':['index.html','text/html; charset=utf-8'],'/app.js':['app.js','text/javascript; charset=utf-8'],'/style.css':['style.css','text/css; charset=utf-8']};
     if(req.method==='GET' && files[path]){ const [name,type]=files[path];res.setHeader('Content-Type',type);res.end(readFileSync(join(HERE,'public',name)));return; }

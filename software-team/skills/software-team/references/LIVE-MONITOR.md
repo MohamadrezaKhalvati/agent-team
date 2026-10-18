@@ -44,6 +44,7 @@ The server assigns sequence, timestamp, and provenance. Emit actual events as th
 | message.sent | Actual sender agentId, recipient to, summary of a message actually sent or received |
 | decision.recorded | title, summary; optional details and supporting path |
 | evidence.recorded | title, summary; optional result, path, taskId, details |
+| report.ready | title and generated /reports/<job-id>/r001/report.html path; runId must match the stored report |
 
 Give each subagent its role, task, shared record locations, and monitor connection path. When shell/file tools are available, ask it to report its own starts, blockers, consequential messages and handoffs. Otherwise the Coordinator mirrors actual host messages and labels them through the same agent-reported event path. Update both sender and task identity accurately. Creating a dashboard node does not create a subagent; use the host delegation tool first.
 
@@ -61,7 +62,7 @@ Agent-reported evidence must identify actual artifact paths or check results wit
 
 ## Finish and limitations
 
-After independent review, record resolved findings, accurate final task/agent states, and a run.finished event. Distinguish verification from production release. Leave the read-only dashboard available and tell the user its URL and runtime limitations.
+After independent review, generate and review the bilingual report using JOB-REPORTS.md, publish report.ready, then record resolved findings, accurate final task/agent states, and a run.finished event. Distinguish verification from production release. Leave the read-only dashboard available and tell the user its URL and runtime limitations.
 
 Coverage includes explicit agent reports and wrapped command outcomes, not all host tool calls, unreported communications, hidden reasoning, or continuous autonomous execution. The monitor server heartbeat proves connection health, not agent liveness. The UI separately shows the age of team activity. After a host session ends, dashboard persistence depends on the process facility used; the monitor does not keep Codex working in the background.
 

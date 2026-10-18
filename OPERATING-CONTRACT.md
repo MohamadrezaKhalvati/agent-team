@@ -2,7 +2,7 @@
 
 Status: Draft v1 — all ten planned sections have initial user agreement. Not yet validated through a team pilot; role 2.12 (AI Engineer) remains a high-level placeholder requiring research and revision before first use.
 
-Working language: English for this contract and shared team documentation. Conversation with the user may follow the user's preferred language.
+Working language: English for this contract and internal shared team documentation. Full technical delivery reports are required in both Persian and English. Conversation with the user may follow the user's preferred language.
 
 ## Confirmed foundations
 
@@ -699,6 +699,17 @@ Keep these states distinct:
 Implemented -> Ready for review -> Verified -> Released
 
 Technical verification does not authorize production release. Release authority remains with the user under Section 1.
+
+### 8.1 Bilingual delivery reports and revision continuity
+
+Status: Agreed for plugin version 0.3.0; validate through actual usage.
+
+- After each delivery job, including partial or blocked work, provide a comprehensive technical report in full Persian and English, with a standalone HTML view, Markdown counterparts, a shared structured evidence record, and meaningful visualization.
+- Cover outcome and requirements, implementation and changed files, architecture, decisions and tradeoffs, actual verification and review findings, risks and unverified behavior, operation and recovery, next actions, and continuation context. Mark non-applicable topics explicitly and keep detail proportionate.
+- Align substantive findings, stable IDs, statuses, numbers, and evidence references across languages. Persian must be full technical content with RTL presentation, not a short summary. Rendering and structural validation do not establish truth or translation equivalence.
+- Identify the run and actual code snapshot, including relevant uncommitted changes. Separate technical status, release status, independent-review status, and pending user acceptance.
+- Preserve prior numbered reports. When the user requests changes, continue the same job with a new run, traceable feedback, affected acceptance criteria, fresh verification, and the next report revision referencing its parent.
+- Publish report links through the monitor and final handoff. Report recommendations do not authorize new scope; production release authority remains unchanged.
 
 ## 9. Release and production operations
 

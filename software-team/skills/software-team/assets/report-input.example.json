@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "jobId": "example-job",
+  "revision": 1,
+  "runId": "example-run",
+  "codeVersion": "Replace with inspected commit and change snapshot",
+  "dirtyWorktree": false,
+  "technicalStatus": "partial",
+  "releaseStatus": "not-released",
+  "reviewStatus": "not-reviewed",
+  "title": {"en": "Example job report — replace with actual content", "fa": "نمونه گزارش کار — با محتوای واقعی جایگزین شود"},
+  "summary": {"en": "Schema illustration only. No implementation or verification is claimed.", "fa": "این فقط نمونه ساختار است. هیچ ادعایی درباره پیاده‌سازی یا راستی‌آزمایی ندارد."},
+  "requirements": [{"id": "REQ-1", "text": {"en": "Replace with an actual acceptance criterion.", "fa": "با یک معیار پذیرش واقعی جایگزین شود."}, "status": "not-met", "evidenceIds": ["CHECK-1"]}],
+  "evidence": [{"id": "CHECK-1", "label": {"en": "Example check — not executed", "fa": "بررسی نمونه — اجرا نشده"}, "method": {"en": "Replace with actual command or inspection method, environment and result.", "fa": "با فرمان یا روش بررسی واقعی، محیط و نتیجه جایگزین شود."}, "status": "not-run", "reference": "No evidence yet; replace with an actual artifact or journal reference."}],
+  "sections": {
+    "changes": {"en": "Describe actual changed files and behavior; no changes are claimed by this example.", "fa": "فایل‌ها و رفتارهای واقعاً تغییرکرده را شرح دهید؛ این نمونه ادعای تغییری ندارد."},
+    "architecture": {"en": "Explain actual boundaries and flow; the sample diagram is proposed only.", "fa": "مرزها و جریان واقعی را توضیح دهید؛ نمودار نمونه صرفاً پیشنهادی است."},
+    "decisions": {"en": "Record alternatives, evidence, tradeoffs, assumptions and maintenance costs.", "fa": "گزینه‌ها، شواهد، مصالحه‌ها، فرضیات و هزینه نگهداری را ثبت کنید."},
+    "review": {"en": "No independent review performed for this example. Record actual reviewers and findings.", "fa": "برای این نمونه بازبینی مستقلی انجام نشده است. بازبین‌ها و یافته‌های واقعی را ثبت کنید."},
+    "risks": {"en": "Record known defects and unverified behavior, including security, performance and accessibility implications.", "fa": "نقص‌های شناخته‌شده و رفتار بررسی‌نشده، از جمله پیامدهای امنیت، عملکرد و دسترس‌پذیری را ثبت کنید."},
+    "operations": {"en": "Provide actual setup, run, deployment, migration and recovery instructions, or explain non-applicability.", "fa": "دستورهای واقعی راه‌اندازی، اجرا، انتشار، مهاجرت و بازیابی را بنویسید یا علت نامرتبط‌بودن را توضیح دهید."},
+    "nextSteps": {"en": "List required corrections, user decisions and optional recommendations separately, using stable IDs.", "fa": "اصلاحات لازم، تصمیم‌های کاربر و پیشنهادهای اختیاری را با شناسه ثابت و جداگانه بنویسید."},
+    "revisionContext": {"en": "First revision. Reference actual spec, tasks, decisions and code snapshot before handoff.", "fa": "دور نخست. پیش از تحویل، به مشخصات، وظایف، تصمیم‌ها و نسخه واقعی کد ارجاع دهید."}
+  },
+  "diagram": {
+    "kind": "proposed",
+    "caption": {"en": "Illustrative flow only; replace with a diagram relevant to the actual job.", "fa": "جریان صرفاً نمونه است؛ با نمودار مرتبط با کار واقعی جایگزین شود."},
+    "nodes": [{"id": "request", "label": {"en": "Request", "fa": "درخواست"}}, {"id": "result", "label": {"en": "Result", "fa": "نتیجه"}}],
+    "edges": [{"from": "request", "to": "result"}]
+  }
+}

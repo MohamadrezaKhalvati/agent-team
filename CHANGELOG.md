@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.3.0
+
+### Added
+
+- Full Persian and English technical reports after each delivery job, with standalone HTML, Markdown, structured evidence, and diagrams.
+- Stable job IDs and preserved numbered revisions for user feedback and continued implementation.
+- Report validation, requirement/evidence mapping, explicit review/release status, and pending user acceptance.
+- Job reports view in the live monitor with safe project-local report serving.
+- Integration checks for bilingual output, revision preservation, report identity, escaping, and filesystem boundaries.
+
 ## 0.2.0
 
 ### Added

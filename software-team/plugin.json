@@ -13,11 +13,11 @@
         "defaultPrompt": "Use Software Team for this project. Inspect the current state, select the smallest sufficient specialist team, and follow the operating contract.",
         "developerName": "Mohamadreza Khalvati",
         "displayName": "Software Team",
-        "longDescription": "A coordinator skill and a 13-role operating contract with a local live monitor for spec and feature delivery. Shows reported agent coordination, tasks, decisions, and captured command outcomes. Requires Node.js 20+ and host delegation tools for actual subagents. Local pilot; no automatic host-wide telemetry or autonomous background Codex runtime.",
+        "longDescription": "A phase-appropriate software team with a local live monitor and comprehensive Persian/English technical job reports, visualizations, evidence, and preserved revision history. Requires Node.js 20+ and host delegation tools for actual subagents. No automatic host-wide telemetry or autonomous background Codex runtime.",
         "shortDescription": "Coordinated software delivery"
       }
     }
   },
   "name": "software-team",
-  "version": "0.2.0"
+  "version": "0.3.0"
 }

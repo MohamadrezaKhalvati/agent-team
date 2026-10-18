@@ -2,12 +2,13 @@ import test from 'node:test';
 import http from 'node:http';
 import net from 'node:net';
 import assert from 'node:assert/strict';
-import { mkdtempSync,readFileSync,writeFileSync,statSync } from 'node:fs';
+import { mkdtempSync,readFileSync,writeFileSync,statSync, mkdirSync, symlinkSync, unlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join,dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
 import { startMonitor } from './monitor.mjs';
+import { generateReport } from '../reports/report.mjs';
 const HERE=dirname(fileURLToPath(import.meta.url));
 async function fixture(t){const project=mkdtempSync(join(tmpdir(),'team-monitor-'));const m=await startMonitor({project,port:0});t.after(()=>m.close());const c=JSON.parse(readFileSync(m.connection));const post=(event,headers={})=>fetch(m.url+'/api/events',{method:'POST',headers:{'Authorization':`Bearer ${c.token}`,...headers},body:JSON.stringify(event)});return {...m,c,post,project};}
 async function cli(args){return new Promise(ok=>{const child=spawn(process.execPath,[join(HERE,'monitor.mjs'),...args],{stdio:['ignore','pipe','pipe']});let out='';child.stdout.on('data',b=>out+=b);child.stderr.on('data',b=>out+=b);child.on('exit',code=>ok({code,out}));});}
@@ -71,4 +72,21 @@ test('malformed request target returns 400 without crashing the monitor',async t
  const m=await fixture(t);const u=new URL(m.url);
  const response=await new Promise((ok,no)=>{const socket=net.connect(Number(u.port),'127.0.0.1',()=>socket.write(`GET http://[ HTTP/1.1\r\nHost: ${u.host}\r\nConnection: close\r\n\r\n`));let text='';socket.on('data',b=>text+=b);socket.on('end',()=>ok(text));socket.on('error',no);});
  assert.match(response,/400/);assert.equal((await fetch(m.url+'/api/state')).status,200);
+});
+
+test('publishes real report links with matching run identity and safe file boundaries',async t=>{
+ const m=await fixture(t);await m.post({type:'run.started',runId:'report-run',title:'Report run'});
+ const input=JSON.parse(readFileSync(join(HERE,'../../assets/report-input.example.json'),'utf8'));input.jobId='job';input.runId='report-run';
+ const generated=generateReport(input,{project:m.project});const dir=generated.directory;
+ const event={type:'report.ready',runId:'report-run',title:'Review report',path:'/reports/job/r001/report.html'};
+ assert.equal((await m.post(event)).status,201);
+ const response=await fetch(m.url+event.path);assert.equal(response.status,200);assert.match(response.headers.get('content-security-policy'),/default-src 'none'/);assert.match(await response.text(),/report-en/);
+ assert.equal((await m.post({...event,path:'https://external.example/report.html'})).status,400);
+ assert.equal((await m.post({...event,path:'/reports/job/r002/report.html'})).status,400);
+ const record=JSON.parse(readFileSync(join(dir,'report.json'),'utf8'));record.runId='wrong';writeFileSync(join(dir,'report.json'),JSON.stringify(record));assert.equal((await m.post(event)).status,400);
+ unlinkSync(join(dir,'report.en.md'));
+ record.runId='report-run';writeFileSync(join(dir,'report.json'),JSON.stringify(record));assert.equal((await m.post(event)).status,400);
+ const outside=join(m.project,'.team-monitor','connection.json');symlinkSync(outside,join(dir,'report.en.md'));
+ assert.equal((await fetch(m.url+'/reports/job/r001/report.en.md')).status,404);
+ assert.equal((await fetch(m.url+'/reports/job/r001/connection.json')).status,404);
 });
