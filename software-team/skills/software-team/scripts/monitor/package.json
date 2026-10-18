@@ -1,0 +1,1 @@
+{"name":"software-team-monitor","version":"0.2.0","private":true,"type":"module","engines":{"node":">=20"},"scripts":{"test":"node --test monitor.test.mjs","start":"node monitor.mjs start"}}
