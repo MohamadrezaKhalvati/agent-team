@@ -51,3 +51,13 @@ test('bundled operating contract is identical to the canonical root contract', {
   const copies = { 'OPERATING-CONTRACT.md': read(join(ROOT, 'OPERATING-CONTRACT.md')), 'references/OPERATING-CONTRACT.md': read(join(SKILL, 'references', 'OPERATING-CONTRACT.md')) };
   assert.deepEqual(findDrift(copies), [], 'Bundled contract differs from the canonical root contract; update the copy and review the diff.');
 });
+
+test('contract headings named by the skill exist in the bundled contract', () => {
+  const contract = read(join(SKILL, 'references', 'OPERATING-CONTRACT.md')), skill = read(join(SKILL, 'SKILL.md'));
+  const named = ['Parallel execution and conflict prevention', 'Delegation and handoff contract', 'Research and decision standards', 'Engineering and design quality requirements', 'Independent review and completion criteria', 'Simplicity and maintainability principle'];
+  for (const heading of named) {
+    assert.ok(skill.includes(heading), `SKILL.md no longer names "${heading}"`);
+    assert.match(contract, new RegExp(`^#{2,3} (\\d+(\\.\\d+)*\\.? )?${heading}`, 'm'), `Contract heading missing: ${heading}`);
+  }
+  assert.equal([...contract.matchAll(/^### 2\.\d+ /gm)].length, 13, 'Expected the thirteen role sections under "### 2.x"');
+});
