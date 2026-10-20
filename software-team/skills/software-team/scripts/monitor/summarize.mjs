@@ -56,8 +56,9 @@ export function summarizeJournal(text) {
     if (event.source === 'command-wrapper') run.capturedEvents++; else run.agentEvents++;
 
     switch (event.type) {
-      case 'run.updated': run.status = event.status; break;
+      case 'run.updated': if (!run.finished) run.status = event.status; break;
       case 'run.finished': {
+        if (run.finished) { warn(event, 'Duplicate run.finished ignored'); break; }
         run.status = event.status; run.finished = true; run.finishedAt = time;
         for (const task of run.tasks.values()) if (task.since !== null && time !== null) { increment(run.durations, task.status, time - task.since); task.since = null; task.closed = true; }
         break;
@@ -78,13 +79,18 @@ export function summarizeJournal(text) {
         task.status = event.status; task.since = time; task.closed = false;
         break;
       }
-      case 'command.started': run.commands.started++; run.openCommands.add(event.commandId); run.seenCommands.add(event.commandId); break;
+      case 'command.started': if (run.seenCommands.has(event.commandId)) { warn(event, 'Duplicate command.started ignored'); break; } run.commands.started++; run.openCommands.add(event.commandId); run.seenCommands.add(event.commandId); break;
       case 'command.finished': {
+        if (run.seenCommands.has(event.commandId) && !run.openCommands.has(event.commandId)) { warn(event, 'Duplicate command.finished ignored'); break; }
         run.commands.finished++;
         if (!run.seenCommands.has(event.commandId)) warn(event, 'Command finished without a start event');
+        run.seenCommands.add(event.commandId);
         run.openCommands.delete(event.commandId);
         if (event.exitCode === 0 && !event.signal) run.commands.passed++; else run.commands.failed++;
-        if (Number.isFinite(event.durationMs)) run.commands.totalDurationMs += event.durationMs;
+        if (Number.isFinite(event.durationMs)) {
+          if (Number.isFinite(run.commands.totalDurationMs + event.durationMs)) run.commands.totalDurationMs += event.durationMs;
+          else warn(event, 'Command duration overflows the total; excluded');
+        }
         break;
       }
       default: break;

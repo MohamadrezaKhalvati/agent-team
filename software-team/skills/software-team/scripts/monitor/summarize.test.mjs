@@ -116,6 +116,27 @@ test('command pairing handles orphans, signals and duplicate completions', () =>
   assert.ok(s.warnings.some(w => /without a start/i.test(w.message)));
 });
 
+test('final run status is not overwritten and duplicate completions are ignored with warnings', () => {
+  const text = journal([
+    [0, { type: 'run.started', runId: run, title: 'x' }],
+    [1, { type: 'run.finished', runId: run, status: 'finished' }],
+    [2, { type: 'run.updated', runId: run, status: 'running' }],
+    [3, { type: 'run.finished', runId: run, status: 'failed' }],
+    [4, { type: 'command.started', runId: run, commandId: 'd' }],
+    [5, { type: 'command.started', runId: run, commandId: 'd' }],
+    [6, { type: 'command.finished', runId: run, commandId: 'd', exitCode: 0, durationMs: 1.7e308 }],
+    [7, { type: 'command.finished', runId: run, commandId: 'd', exitCode: 0, durationMs: 1.7e308 }],
+    [8, { type: 'command.started', runId: run, commandId: 'e' }],
+    [9, { type: 'command.finished', runId: run, commandId: 'e', exitCode: 0, durationMs: 1.7e308 }],
+  ]);
+  const s = summarizeJournal(text), r = s.runs[0];
+  assert.equal(r.status, 'finished');
+  assert.equal(r.elapsedMs, 1000);
+  assert.deepEqual(r.captured.commands, { started: 2, finished: 2, passed: 2, failed: 0, unfinished: 0, totalDurationMs: 1.7e308 });
+  for (const [seq, pattern] of [[4, /duplicate run.finished/i], [6, /duplicate command.started/i], [8, /duplicate command.finished/i], [10, /overflows/i]]) assert.ok(s.warnings.some(w => w.seq === seq && pattern.test(w.message)), 'missing warning for seq ' + seq);
+  assert.ok(Number.isFinite(r.captured.commands.totalDurationMs));
+});
+
 test('events after run.finished are reported', () => {
   const text = journal([
     [0, { type: 'run.started', runId: run, title: 'x' }],
