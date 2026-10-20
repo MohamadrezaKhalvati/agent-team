@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Read-only `summarize.mjs` journal metrics (elapsed time, counts, task-state durations, rework transitions, command outcomes); no token or cost data.
+- Consistency tests for the bundled contract and version numbers.
+
+### Changed
+
+- Credential-file permission test runs on POSIX only; local read-endpoint and Windows limitations documented.
+
 ## 0.3.0
 
 ### Added

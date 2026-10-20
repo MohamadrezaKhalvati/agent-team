@@ -7,7 +7,7 @@
     "node": ">=20"
   },
   "scripts": {
-    "test": "node --test ../consistency.test.mjs monitor.test.mjs ../reports/report.test.mjs",
+    "test": "node --test ../consistency.test.mjs monitor.test.mjs summarize.test.mjs ../reports/report.test.mjs",
     "start": "node monitor.mjs start"
   }
 }

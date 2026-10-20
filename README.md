@@ -27,6 +27,8 @@ software-team/                Installable plugin package
     scripts/monitor/
       monitor.mjs             Local server and event/command CLI
       monitor.test.mjs        Integration tests
+      summarize.mjs           Read-only journal metrics
+      summarize.test.mjs      Metrics tests
       public/                 Dashboard HTML, CSS, and JavaScript
     scripts/reports/
       report.mjs              Bilingual report builder
@@ -61,6 +63,14 @@ The target project's `.team-monitor/` directory stores the journal and private c
 
 The coordinator and specialists report actual tasks, messages, decisions, and evidence through the event CLI. Relevant commands can run through the wrapper, which captures exit status and duration while excluding arguments and output. See the workflow for event schemas and examples.
 
+## Summarize a run
+
+```bash
+node software-team/skills/software-team/scripts/monitor/summarize.mjs --project /absolute/path/to/target-project
+```
+
+Prints deterministic JSON derived only from `.team-monitor/events.jsonl`: elapsed time, agent, message and task counts, task-state durations, rework transitions (review, verified or released back to planned or running) and wrapped command outcomes. Agent-reported and captured data are labeled separately; timestamps are monitor receipt times; incomplete runs and unreadable timestamps are reported as such. Model tokens and billing cost are not recorded by the event protocol and are listed as unmeasured. The command never modifies the journal and rejects an invalid one.
+
 ## Review completed jobs and request changes
 
 Each delivery job produces full Persian and English reports with a standalone HTML view, diagrams, acceptance/evidence mapping, risks, operations, and next steps. The **Job reports** monitor view links to the report and both Markdown versions. Reports live in `docs/team-reports/<job-id>/r001/` in the target project.
@@ -74,7 +84,7 @@ The [report workflow](software-team/skills/software-team/references/JOB-REPORTS.
 From the repository root:
 
 ```bash
-node --test software-team/skills/software-team/scripts/consistency.test.mjs software-team/skills/software-team/scripts/monitor/monitor.test.mjs software-team/skills/software-team/scripts/reports/report.test.mjs
+node --test software-team/skills/software-team/scripts/consistency.test.mjs software-team/skills/software-team/scripts/monitor/monitor.test.mjs software-team/skills/software-team/scripts/monitor/summarize.test.mjs software-team/skills/software-team/scripts/reports/report.test.mjs
 ```
 
 The suite covers monitor access and validation, live streaming and reconnect, concurrent writes and restart, corrupt journals, command failure propagation, single-writer ownership, long-history retention, malformed requests, report generation and confinement, and consistency of the bundled contract and version numbers. The 0.3.0 pilot recorded 16 passing tests on its development machine; run the command above for current results. The credential-file permission assertion runs on POSIX only. Independent server/security and frontend/UX reviews were performed; reported defects were corrected. Browser checks covered live updates, keyboard focus and dialogs, search, restart recovery, and a 375px mobile viewport.
