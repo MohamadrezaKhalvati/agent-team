@@ -1,0 +1,42 @@
+name: Node.js test matrix
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Node 24 / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+      - name: Set up Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Confirm runtime
+        run: node --version
+      - name: Run all 47 source tests
+        run: >-
+          node --test
+          software-team/skills/software-team/scripts/consistency.test.mjs
+          software-team/skills/software-team/scripts/monitor/monitor.test.mjs
+          software-team/skills/software-team/scripts/monitor/summarize.test.mjs
+          software-team/skills/software-team/scripts/reports/report.test.mjs
