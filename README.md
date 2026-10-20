@@ -19,10 +19,20 @@ software-team/                Installable plugin package
     references/
       OPERATING-CONTRACT.md    Bundled contract
       LIVE-MONITOR.md          Instrumentation and startup workflow
+      JOB-REPORTS.md           Bilingual report and revision workflow
+    assets/
+      report-input.example.json  Report input schema illustration
+    scripts/
+      consistency.test.mjs    Contract-copy and version consistency checks
     scripts/monitor/
       monitor.mjs             Local server and event/command CLI
       monitor.test.mjs        Integration tests
+      summarize.mjs           Read-only journal metrics
+      summarize.test.mjs      Metrics tests
       public/                 Dashboard HTML, CSS, and JavaScript
+    scripts/reports/
+      report.mjs              Bilingual report builder
+      report.test.mjs         Report tests
 ```
 
 ## Use in Codex
@@ -53,6 +63,14 @@ The target project's `.team-monitor/` directory stores the journal and private c
 
 The coordinator and specialists report actual tasks, messages, decisions, and evidence through the event CLI. Relevant commands can run through the wrapper, which captures exit status and duration while excluding arguments and output. See the workflow for event schemas and examples.
 
+## Summarize a run
+
+```bash
+node software-team/skills/software-team/scripts/monitor/summarize.mjs --project /absolute/path/to/target-project
+```
+
+Prints deterministic JSON derived only from `.team-monitor/events.jsonl`: elapsed time, agent, message and task counts, task-state durations, rework transitions (review, verified or released back to planned or running) and wrapped command outcomes. Agent-reported and captured data are labeled separately; timestamps are monitor receipt times; incomplete runs are reported as such. Only ISO 8601 timestamps with an explicit timezone and a real calendar date, in journal order, enter time measurements; others are excluded with a warning. Order is checked across the whole journal, so one forward-skewed timestamp excludes the later events of every run from timing. Task changes after `run.finished` do not alter the final task snapshot, and a `run.finished` with a nonterminal status (running, blocked, review) is flagged as inconsistent and not counted as completion. Model tokens and billing cost are not recorded by the event protocol and are listed as unmeasured. The command never modifies the journal and rejects an invalid one.
+
 ## Review completed jobs and request changes
 
 Each delivery job produces full Persian and English reports with a standalone HTML view, diagrams, acceptance/evidence mapping, risks, operations, and next steps. The **Job reports** monitor view links to the report and both Markdown versions. Reports live in `docs/team-reports/<job-id>/r001/` in the target project.
@@ -66,10 +84,10 @@ The [report workflow](software-team/skills/software-team/references/JOB-REPORTS.
 From the repository root:
 
 ```bash
-node --test software-team/skills/software-team/scripts/monitor/monitor.test.mjs software-team/skills/software-team/scripts/reports/report.test.mjs
+node --test software-team/skills/software-team/scripts/consistency.test.mjs software-team/skills/software-team/scripts/monitor/monitor.test.mjs software-team/skills/software-team/scripts/monitor/summarize.test.mjs software-team/skills/software-team/scripts/reports/report.test.mjs
 ```
 
-The pilot passed eight integration tests covering access and validation, live streaming and reconnect, concurrent writes and restart, corrupt journals, command failure propagation, single-writer ownership, long-history retention, and malformed requests. Independent server/security and frontend/UX reviews were performed; reported defects were corrected. Browser checks covered live updates, keyboard focus and dialogs, search, restart recovery, and a 375px mobile viewport.
+The suite covers monitor access and validation, live streaming and reconnect, concurrent writes and restart, corrupt journals, command failure propagation, single-writer ownership, long-history retention, malformed requests, report generation and confinement, and consistency of the bundled contract and version numbers. The 0.3.0 pilot recorded 16 passing tests on its development machine; run the command above for current results. The credential-file permission assertion runs on POSIX only. Independent server/security and frontend/UX reviews were performed; reported defects were corrected. Browser checks covered live updates, keyboard focus and dialogs, search, restart recovery, and a 375px mobile viewport.
 
 These checks are not a comprehensive production security or accessibility certification. A fresh spec executed through an updated installed-plugin session remains the next end-to-end validation step.
 
@@ -92,6 +110,8 @@ Publishing source to GitHub does not automatically update the account plugin. Up
 - Uninstrumented host tools, unreported messages, and hidden model reasoning are outside coverage.
 - Connection heartbeat and age of team activity are separate signals.
 - A running dashboard does not keep Codex working after its session ends.
+- **Local confidentiality:** only event writes require the bearer token. The dashboard, `/api/state`, `/api/stream` and report routes are readable without a token by any local process that can reach the loopback port, so events and reports are not secret from other software or users on the same machine. Host and Origin checks defend against cross-site browser access, not local processes. Do not put secrets in events or reports.
+- **Credential file:** `.team-monitor/connection.json` is created with POSIX mode `0600`. On Windows these mode bits are not an access-control guarantee, and no Windows ACL protection has been established or tested. Treat the file as readable by other local accounts that can access the project directory, and keep the project in a user-private location.
 - The pilot keeps complete event history in memory and sends it on reconnect. It is intended for bounded local runs, not unlimited telemetry or remote multi-user deployment.
 
 ## Sharing

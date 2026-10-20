@@ -17,9 +17,21 @@ Inspect the project's existing instructions, relevant code, requirements, decisi
 
 For spec, feature, and module execution, follow [the live monitor workflow](references/LIVE-MONITOR.md). Start or reuse the local monitor, present its actual URL before implementation, and instrument actual assignments, messages, task transitions, decisions, and evidence throughout execution. Use the command wrapper for relevant checks. Report any telemetry gaps honestly. Monitoring does not create delegation capability or an independent background Codex runtime.
 
+## Size the work and choose the team
+
+Classify the work, and reassess when facts change. **Small** (localized, low-risk, reversible): the Coordinator may implement directly or delegate to one implementing agent. Review is proportionate to risk, but the author is never the sole approver; consequential changes need an independent reviewer of the actual diff. Do not activate additional agents solely because a task is Small. **Medium** (multi-file, real integration risk): the Coordinator plus the specialists the change touches; parallel work only after shared contracts are agreed. **Complex** (cross-module, security- or data-sensitive, architectural): a risk-driven team with the relevant specialist reviewers. Size never lowers independent review, security, data-correctness, reporting, or release-authority requirements.
+
+Before each delegation weigh: required expertise, task independence, expected critical-path benefit, context and coordination overhead, integration risk, and required independent review. Delegate only when the benefit outweighs the overhead; do not invent numeric thresholds.
+
+## Delegation packets
+
+Give each specialist a compact packet: mission and expected output; scope and owned files; authoritative references (paths, IDs, or contract headings, not pasted copies); acceptance criteria; dependencies and known decisions; evidence required; stop conditions (when done, when blocked, what to escalate; no self-expanded scope). Give the role's own `### 2.x` contract section plus these shared sections, by heading: Parallel execution and conflict prevention, Delegation and handoff contract, Research and decision standards, Engineering and design quality requirements, Independent review and completion criteria, and the Simplicity and maintainability principle.
+
+Handoffs stay brief: changed files, checks actually run with results, assumptions and open risks, and what the next owner needs, citing evidence by path or ID.
+
 ## Coordinate delivery
 
-Use the host's actual delegation tools when available and authorized. Assign bounded work with authoritative inputs, ownership, acceptance criteria, dependencies, and a stopping point. Respect available concurrency limits; roles are expertise, not a requirement to run thirteen agents. Communicate consequential findings directly to affected agents and keep the Coordinator informed. Avoid overlapping edits and integrate incrementally.
+Use the host's actual delegation tools when available and authorized. Assign bounded work using the packet above. Respect available concurrency limits; roles are expertise, not a requirement to run thirteen agents. Communicate consequential findings directly to affected agents and keep the Coordinator informed. Avoid overlapping edits and integrate incrementally.
 
 If delegation is unavailable, disclose that limitation. Perform useful work within capability, but never claim independent review or parallel agent execution that did not occur. Do not build a custom orchestration server to compensate unless requested.
 

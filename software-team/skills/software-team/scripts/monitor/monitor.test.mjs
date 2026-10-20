@@ -25,7 +25,8 @@ test('authenticated writes, validation, host/origin boundaries and no exposed cr
  assert.equal((await fetch(m.url+'/api/state',{headers:{'Sec-Fetch-Site':'cross-site'}})).status,403);
  const response=await fetch(m.url+'/api/state');const body=await response.text();assert.ok(!body.includes(m.c.token));assert.ok(!body.includes(m.c.captureToken));
  assert.equal((await fetch(m.url+'/.team-monitor/connection.json')).status,404);
- assert.equal(statSync(m.connection).mode&0o777,0o600);
+ // POSIX mode bits only. Windows reports synthetic modes, so this proves nothing about ACLs there; see README "Monitoring boundaries".
+ if(process.platform!=='win32')assert.equal(statSync(m.connection).mode&0o777,0o600);
  const page=await fetch(m.url);assert.match(page.headers.get('content-security-policy'),/frame-ancestors 'none'/);
 });
 test('SSE streams actual events; reconnect snapshots recover missed history',async t=>{
