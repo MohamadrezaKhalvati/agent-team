@@ -19,7 +19,7 @@ For spec, feature, and module execution, follow [the live monitor workflow](refe
 
 ## Size the work and choose the team
 
-Classify the work, and reassess when facts change. **Small** (localized, low-risk, reversible): one implementing agent plus an independent reviewer of the actual diff. **Medium** (multi-file, real integration risk): the Coordinator plus the specialists the change touches; parallel work only after shared contracts are agreed. **Complex** (cross-module, security- or data-sensitive, architectural): a risk-driven team with the relevant specialist reviewers. Size never lowers independent review, security, data-correctness, reporting, or release-authority requirements.
+Classify the work, and reassess when facts change. **Small** (localized, low-risk, reversible): the Coordinator may implement directly or delegate to one implementing agent. Review is proportionate to risk, but the author is never the sole approver; consequential changes need an independent reviewer of the actual diff. Do not activate additional agents solely because a task is Small. **Medium** (multi-file, real integration risk): the Coordinator plus the specialists the change touches; parallel work only after shared contracts are agreed. **Complex** (cross-module, security- or data-sensitive, architectural): a risk-driven team with the relevant specialist reviewers. Size never lowers independent review, security, data-correctness, reporting, or release-authority requirements.
 
 Before each delegation weigh: required expertise, task independence, expected critical-path benefit, context and coordination overhead, integration risk, and required independent review. Delegate only when the benefit outweighs the overhead; do not invent numeric thresholds.
 

@@ -9,6 +9,7 @@
 
 ### Changed
 
+- Skill: Small tasks no longer imply two agents; independent review stays proportionate to risk.
 - Credential-file permission test runs on POSIX only; local read-endpoint and Windows limitations documented.
 
 ## 0.3.0

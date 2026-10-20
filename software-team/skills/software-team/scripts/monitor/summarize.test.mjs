@@ -206,3 +206,180 @@ test('CLI fails closed on a missing or corrupt journal and leaves it untouched',
   assert.equal(readFileSync(file, 'utf8'), '{not json\n');
   assert.notEqual(cli().status, 0);
 });
+
+// ---- Correctness regressions from the independent re-review of 09aca7d ----
+const raw = events => events.map((event, i) => JSON.stringify({ source: event.type.startsWith('command.') ? 'command-wrapper' : 'agent-reported', ...event, seq: i + 1 })).join('\n') + '\n';
+const keysOf = value => value && typeof value === 'object' ? Object.entries(value).flatMap(([key, inner]) => [key, ...keysOf(inner)]) : [];
+
+test('no field name anywhere in the output reports tokens, cost or cache usage', () => {
+  const s = summarizeJournal(complete());
+  const offending = keysOf({ ...s, unmeasured: undefined }).filter(key => /token|cost|usd|price|billing|cache/i.test(key));
+  assert.deepEqual(offending, []);
+  assert.ok(s.unmeasured.includes('model tokens') && s.unmeasured.includes('billing cost') && s.unmeasured.includes('cache usage'));
+});
+
+test('an out-of-order run.started timestamp cannot supply a run start time', () => {
+  const text = journal([
+    [0, { type: 'run.started', runId: 'r1', title: 'A' }],
+    [10, { type: 'run.started', runId: 'b', title: 'B' }],
+    [3, { type: 'run.started', runId: 'c', title: 'C' }],
+    [20, { type: 'run.finished', runId: 'c', status: 'finished' }],
+  ]);
+  const s = summarizeJournal(text), c = s.runs.find(r => r.runId === 'c');
+  assert.ok(s.warnings.some(w => w.seq === 3 && /order/i.test(w.message)));
+  assert.equal(c.finished, true);
+  assert.equal(c.elapsedMs, null);
+  assert.equal(c.observedSpanMs, null);
+  assert.ok(s.warnings.some(w => w.runId === 'c' && w.seq === null && /elapsed time unavailable/i.test(w.message)));
+});
+
+test('an out-of-order run.finished cannot supply a finish time or task durations', () => {
+  const text = journal([
+    [0, { type: 'run.started', runId: run, title: 'x' }],
+    [5, { type: 'task.updated', runId: run, taskId: 'T1', agentId: 'a', status: 'planned', title: 't' }],
+    [30, { type: 'agent.updated', runId: run, agentId: 'a', status: 'working' }],
+    [20, { type: 'run.finished', runId: run, status: 'finished' }],
+  ]);
+  const r = summarizeJournal(text).runs[0];
+  assert.equal(r.finished, true);
+  assert.equal(r.elapsedMs, null);
+  assert.deepEqual(r.agentReported.tasks.stateDurationsMs, {});
+  assert.equal(r.agentReported.tasks.openStates, 1);
+});
+
+test('task updates after run.finished leave the final task snapshot unchanged and are reported', () => {
+  const text = journal([
+    [0, { type: 'run.started', runId: run, title: 'x' }],
+    [1, { type: 'task.updated', runId: run, taskId: 'T1', agentId: 'a', status: 'planned', title: 't' }],
+    [5, { type: 'run.finished', runId: run, status: 'finished' }],
+    [9, { type: 'task.updated', runId: run, taskId: 'T1', status: 'running' }],
+    [10, { type: 'task.updated', runId: run, taskId: 'T2', agentId: 'a', status: 'planned', title: 'new' }],
+  ]);
+  const s = summarizeJournal(text), tasks = s.runs[0].agentReported.tasks;
+  assert.deepEqual(tasks, { count: 1, statusReports: 1, transitions: 0, reworkTransitions: 0, finalStatusCounts: { planned: 1 }, stateDurationsMs: { planned: 4000 }, openStates: 0 });
+  for (const seq of [4, 5]) assert.ok(s.warnings.some(w => w.seq === seq && /after run\.finished/i.test(w.message) && /task/i.test(w.message)), 'missing warning for seq ' + seq);
+  assert.equal(s.warnings.filter(w => w.seq === 4).length, 1);
+});
+
+test('timestamps must be ISO 8601 with an explicit timezone and a real calendar date', () => {
+  const finishAt = '2026-01-01T00:00:10.000Z';
+  const elapsedFor = startAt => {
+    const s = summarizeJournal(raw([{ type: 'run.started', runId: run, title: 'x', at: startAt }, { type: 'run.finished', runId: run, status: 'finished', at: finishAt }]));
+    return [s.runs[0].elapsedMs, s.warnings.some(w => w.seq === 1 && /timestamp/i.test(w.message))];
+  };
+  for (const valid of ['2026-01-01T00:00:00Z', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000000Z', '2026-01-01T03:30:00+03:30', '2025-12-31T19:00:00-05:00', '2024-02-29T00:00:00Z', '2026-01-01T00:00:00z']) {
+    assert.equal(elapsedFor(valid)[1], false, valid);
+    assert.equal(typeof elapsedFor(valid)[0], 'number', valid);
+  }
+  assert.equal(elapsedFor('2026-01-01T03:30:00+03:30')[0], 10000);
+  for (const invalid of ['1', '2026', '2026-01-01', '2026-01-01T00:00:00', '2026-01-01 00:00:00Z', 'Thu, 01 Jan 2026 00:00:00 GMT', 'January 1, 2026', '2026-02-30T00:00:00Z', '2025-02-29T00:00:00Z', '2026-13-01T00:00:00Z', '2026-00-10T00:00:00Z', '2026-04-31T00:00:00Z', '2026-01-01T24:00:00Z', '2026-01-01T00:60:00Z', '2026-01-01T00:00:60Z', '2026-01-01T00:00:00+24:00', '2026-01-01T00:00:00+00:60', '+002026-01-01T00:00:00Z', 20260101, null, '']) {
+    assert.deepEqual(elapsedFor(invalid), [null, true], String(invalid));
+  }
+});
+
+test('an invalid timestamp never becomes the previous-time reference for ordering', () => {
+  const text = raw([
+    { type: 'run.started', runId: run, title: 'x', at: '2026-01-01T00:00:10.000Z' },
+    { type: 'agent.updated', runId: run, agentId: 'a', status: 'working', at: '2999-99-99T00:00:00Z' },
+    { type: 'run.finished', runId: run, status: 'finished', at: '2026-01-01T00:00:20.000Z' },
+  ]);
+  const s = summarizeJournal(text);
+  assert.equal(s.runs[0].elapsedMs, 10000);
+  assert.equal(s.warnings.filter(w => /order/i.test(w.message)).length, 0);
+});
+
+test('command.finished before command.started is counted once and described accurately', () => {
+  const text = journal([
+    [0, { type: 'run.started', runId: run, title: 'x' }],
+    [1, { type: 'command.finished', runId: run, commandId: 'a', exitCode: 0, durationMs: 10 }],
+    [2, { type: 'command.started', runId: run, commandId: 'a' }],
+    [3, { type: 'command.started', runId: run, commandId: 'b' }],
+    [4, { type: 'command.finished', runId: run, commandId: 'b', exitCode: 1, durationMs: 5 }],
+    [5, { type: 'command.started', runId: run, commandId: 'b' }],
+    [6, { type: 'command.finished', runId: run, commandId: 'a', exitCode: 0, durationMs: 10 }],
+  ]);
+  const s = summarizeJournal(text);
+  assert.deepEqual(s.runs[0].captured.commands, { started: 2, finished: 2, passed: 1, failed: 1, unfinished: 0, totalDurationMs: 15 });
+  const at = seq => s.warnings.filter(w => w.seq === seq).map(w => w.message).join();
+  assert.match(at(2), /without a start/i);
+  assert.match(at(3), /after its command\.finished/i);
+  assert.doesNotMatch(at(3), /duplicate/i);
+  assert.match(at(6), /duplicate command\.started/i);
+  assert.match(at(7), /duplicate command\.finished/i);
+});
+
+test('run.finished with a nonterminal status is reported as inconsistent, not as completion', () => {
+  for (const status of ['running', 'blocked', 'review']) {
+    const text = journal([
+      [0, { type: 'run.started', runId: run, title: 'x' }],
+      [1, { type: 'task.updated', runId: run, taskId: 'T1', agentId: 'a', status: 'planned', title: 't' }],
+      [9, { type: 'run.finished', runId: run, status }],
+    ]);
+    const s = summarizeJournal(text), r = s.runs[0];
+    assert.equal(r.finished, false, status);
+    assert.equal(r.status, status);
+    assert.equal(r.elapsedMs, null);
+    assert.equal(r.agentReported.tasks.openStates, 1);
+    assert.ok(s.warnings.some(w => w.seq === 3 && /nonterminal/i.test(w.message) && new RegExp(status).test(w.message)), status);
+  }
+  const later = journal([
+    [0, { type: 'run.started', runId: run, title: 'x' }],
+    [5, { type: 'run.finished', runId: run, status: 'running' }],
+    [8, { type: 'run.finished', runId: run, status: 'verified' }],
+  ]);
+  const r = summarizeJournal(later).runs[0];
+  assert.deepEqual([r.finished, r.status, r.elapsedMs], [true, 'verified', 8000]);
+  for (const status of ['finished', 'verified', 'failed']) {
+    const ok = summarizeJournal(journal([[0, { type: 'run.started', runId: run, title: 'x' }], [4, { type: 'run.finished', runId: run, status }]]));
+    assert.deepEqual([ok.runs[0].finished, ok.runs[0].elapsedMs, ok.warnings.length], [true, 4000, 0], status);
+  }
+});
+
+test('anomalous journals still summarize deterministically and the CLI leaves them untouched', () => {
+  const text = raw([
+    { type: 'run.started', runId: run, title: 'x', at: '2026-01-01T00:00:10.000Z' },
+    { type: 'command.finished', runId: run, commandId: 'a', exitCode: 0, durationMs: 1, at: '2026-01-01T00:00:05.000Z' },
+    { type: 'command.started', runId: run, commandId: 'a', at: 'garbage' },
+    { type: 'run.finished', runId: run, status: 'running', at: '2026-01-01T00:00:30.000Z' },
+  ]);
+  assert.equal(JSON.stringify(summarizeJournal(text)), JSON.stringify(summarizeJournal(text)));
+  const dir = project(text), file = join(dir, '.team-monitor', 'events.jsonl'), before = [readFileSync(file, 'utf8'), statSync(file).mtimeMs];
+  const result = cli('--project', dir);
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual([readFileSync(file, 'utf8'), statSync(file).mtimeMs], before);
+});
+
+test('an out-of-order or invalid timestamp never becomes the ordering reference', () => {
+  const at = value => `2026-01-01T00:00:${String(value).padStart(2, '0')}.000Z`;
+  const out = events => summarizeJournal(raw(events.map(([seconds, event]) => ({ ...event, at: seconds === null ? 'garbage' : at(seconds) })))).warnings.map(w => w.seq);
+  const start = { type: 'run.started', runId: run, title: 'x' }, ping = { type: 'agent.updated', runId: run, agentId: 'a', status: 'working' };
+  // 10, 5 (late), 7 (still earlier than 10, so also late)
+  assert.deepEqual(out([[10, start], [5, ping], [7, ping]]), [2, 3]);
+  // an invalid value must not reset the reference: 10, invalid, 5
+  assert.deepEqual(out([[10, start], [null, ping], [5, ping]]), [2, 3]);
+});
+
+test('untrusted timestamps cannot extend the observed span or open task intervals', () => {
+  const t = seconds => `2026-01-01T00:00:${String(seconds).padStart(2, '0')}.000Z`;
+  const task = (seconds, extra) => ({ type: 'task.updated', runId: 'x', taskId: 'T1', agentId: 'a', ...extra, at: t(seconds) });
+  // another run advances the global reference to 40s, so x's 20s event is late although it is later than x's own last time
+  const s = summarizeJournal(raw([
+    { type: 'run.started', runId: 'x', title: 'X', at: t(0) },
+    { type: 'run.started', runId: 'y', title: 'Y', at: t(40) },
+    { type: 'agent.updated', runId: 'x', agentId: 'a', status: 'working', at: t(20) },
+  ]));
+  assert.equal(s.runs[0].observedSpanMs, 0);
+  const late = summarizeJournal(raw([
+    { type: 'run.started', runId: 'x', title: 'X', at: t(0) },
+    task(30, { status: 'planned', title: 't' }),
+    task(10, { status: 'running' }),
+    { type: 'run.finished', runId: 'x', status: 'finished', at: t(50) },
+  ])).runs[0];
+  assert.deepEqual(late.agentReported.tasks.stateDurationsMs, {});
+  const fresh = summarizeJournal(raw([
+    { type: 'run.started', runId: 'x', title: 'X', at: t(20) },
+    task(5, { status: 'planned', title: 't' }),
+    { type: 'run.finished', runId: 'x', status: 'finished', at: t(50) },
+  ])).runs[0];
+  assert.deepEqual(fresh.agentReported.tasks.stateDurationsMs, {});
+});

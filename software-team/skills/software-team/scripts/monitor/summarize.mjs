@@ -8,6 +8,20 @@ import { validate } from './monitor.mjs';
 
 const REWORK_FROM = new Set(['review', 'verified', 'released']);
 const REWORK_TO = new Set(['planned', 'running']);
+const TERMINAL = new Set(['finished', 'verified', 'failed']);
+// Monitor-written timestamps are Date#toISOString() output. Accept only ISO 8601 with an explicit zone and a real calendar date.
+const ISO = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(?:Z|[+-](\d{2}):(\d{2}))$/i;
+function parseTimestamp(value) {
+  const m = typeof value === 'string' ? ISO.exec(value) : null;
+  if (!m) return null;
+  const [year, month, day, hour, minute, second, offsetHour, offsetMinute] = m.slice(1).map(part => Number(part ?? 0));
+  const date = new Date(0);
+  date.setUTCFullYear(year, month - 1, day);
+  if (date.getUTCMonth() !== month - 1 || date.getUTCDate() !== day) return null;
+  if (hour > 23 || minute > 59 || second > 59 || offsetHour > 23 || offsetMinute > 59) return null;
+  const time = Date.parse(value.toUpperCase());
+  return Number.isFinite(time) ? time : null;
+}
 const UNMEASURED = ['model tokens', 'billing cost', 'cache usage', 'hidden reasoning', 'host tool calls outside the command wrapper', 'activity agents did not report'];
 const fail = message => { throw new Error(message); };
 const increment = (map, key, by = 1) => { map[key] = (map[key] || 0) + by; };
@@ -24,17 +38,16 @@ function parse(text) {
     if (source !== 'agent-reported' && source !== 'command-wrapper') fail(`Invalid journal: unknown source at line ${number}`);
     let event;
     try { event = validate(raw, source); } catch (error) { fail(`Invalid event at line ${number}: ${error.message}`); }
-    const time = typeof raw.at === 'string' ? Date.parse(raw.at) : NaN;
-    events.push({ ...event, seq: raw.seq, time: Number.isFinite(time) ? time : null });
+    events.push({ ...event, seq: raw.seq, time: parseTimestamp(raw.at) });
   });
   return events;
 }
 
-function newRun(event) {
-  return { runId: event.runId, title: event.title, status: 'running', finished: false, startedAt: event.time, finishedAt: null, lastAt: event.time,
+function newRun(event, time) {
+  return { runId: event.runId, title: event.title, status: 'running', finished: false, startedAt: time, finishedAt: null, lastAt: time,
     agents: new Set(), participants: new Set(), messages: 0, decisions: 0, evidence: 0, agentEvents: 0, capturedEvents: 0,
     tasks: new Map(), durations: {}, statusReports: 0, transitions: 0, rework: 0,
-    commands: { started: 0, finished: 0, passed: 0, failed: 0, totalDurationMs: 0 }, openCommands: new Set(), seenCommands: new Set() };
+    commands: { started: 0, finished: 0, passed: 0, failed: 0, totalDurationMs: 0 }, commandStates: new Map() };
 }
 
 export function summarizeJournal(text) {
@@ -43,22 +56,24 @@ export function summarizeJournal(text) {
   let previous = null;
   for (const event of events) {
     let run = runs.get(event.runId);
-    if (event.type === 'run.started') {
-      if (run) fail(`Invalid journal: duplicate run.started for ${event.runId} (seq ${event.seq})`);
-      run = newRun(event); runs.set(event.runId, run);
-    } else if (!run) fail(`Invalid journal: seq ${event.seq} references run ${event.runId} that was never started`);
+    // Only a valid, in-order timestamp is trusted; anything else is excluded from every time measurement.
     let time = event.time;
-    if (time === null) warn(event, 'Missing or unreadable timestamp; excluded from durations');
+    if (time === null) warn(event, 'Missing or invalid ISO 8601 timestamp; excluded from durations');
     else if (previous !== null && time < previous) { warn(event, 'Timestamp out of order; excluded from durations'); time = null; }
     else previous = time;
+    if (event.type === 'run.started') {
+      if (run) fail(`Invalid journal: duplicate run.started for ${event.runId} (seq ${event.seq})`);
+      run = newRun(event, time); runs.set(event.runId, run);
+    } else if (!run) fail(`Invalid journal: seq ${event.seq} references run ${event.runId} that was never started`);
     if (time !== null && (run.lastAt === null || time > run.lastAt)) run.lastAt = time;
-    if (run.finished && event.type !== 'run.finished') warn(event, 'Event recorded after run.finished');
+    if (run.finished && event.type !== 'run.finished' && event.type !== 'task.updated') warn(event, 'Event recorded after run.finished');
     if (event.source === 'command-wrapper') run.capturedEvents++; else run.agentEvents++;
 
     switch (event.type) {
       case 'run.updated': if (!run.finished) run.status = event.status; break;
       case 'run.finished': {
         if (run.finished) { warn(event, 'Duplicate run.finished ignored'); break; }
+        if (!TERMINAL.has(event.status)) { run.status = event.status; warn(event, `run.finished carried nonterminal status "${event.status}"; inconsistent source data, run treated as unfinished`); break; }
         run.status = event.status; run.finished = true; run.finishedAt = time;
         for (const task of run.tasks.values()) if (task.since !== null && time !== null) { increment(run.durations, task.status, time - task.since); task.since = null; task.closed = true; }
         break;
@@ -68,6 +83,7 @@ export function summarizeJournal(text) {
       case 'decision.recorded': run.decisions++; break;
       case 'evidence.recorded': run.evidence++; break;
       case 'task.updated': {
+        if (run.finished) { warn(event, 'Task update after run.finished ignored; final task snapshot unchanged'); break; }
         run.statusReports++;
         let task = run.tasks.get(event.taskId);
         if (!task) { task = { status: event.status, since: time, closed: false }; run.tasks.set(event.taskId, task); break; }
@@ -79,13 +95,20 @@ export function summarizeJournal(text) {
         task.status = event.status; task.since = time; task.closed = false;
         break;
       }
-      case 'command.started': if (run.seenCommands.has(event.commandId)) { warn(event, 'Duplicate command.started ignored'); break; } run.commands.started++; run.openCommands.add(event.commandId); run.seenCommands.add(event.commandId); break;
+      case 'command.started': {
+        const command = run.commandStates.get(event.commandId);
+        if (!command) { run.commandStates.set(event.commandId, { started: true, finished: false }); run.commands.started++; break; }
+        if (command.started) { warn(event, 'Duplicate command.started ignored'); break; }
+        command.started = true; run.commands.started++;
+        warn(event, 'command.started recorded after its command.finished (out of order)');
+        break;
+      }
       case 'command.finished': {
-        if (run.seenCommands.has(event.commandId) && !run.openCommands.has(event.commandId)) { warn(event, 'Duplicate command.finished ignored'); break; }
+        const command = run.commandStates.get(event.commandId);
+        if (command?.finished) { warn(event, 'Duplicate command.finished ignored'); break; }
+        if (command) command.finished = true;
+        else { run.commandStates.set(event.commandId, { started: false, finished: true }); warn(event, 'Command finished without a start event'); }
         run.commands.finished++;
-        if (!run.seenCommands.has(event.commandId)) warn(event, 'Command finished without a start event');
-        run.seenCommands.add(event.commandId);
-        run.openCommands.delete(event.commandId);
         if (event.exitCode === 0 && !event.signal) run.commands.passed++; else run.commands.failed++;
         if (Number.isFinite(event.durationMs)) {
           if (Number.isFinite(run.commands.totalDurationMs + event.durationMs)) run.commands.totalDurationMs += event.durationMs;
@@ -114,7 +137,7 @@ export function summarizeJournal(text) {
         tasks: { count: run.tasks.size, statusReports: run.statusReports, transitions: run.transitions, reworkTransitions: run.rework,
           finalStatusCounts, stateDurationsMs: run.durations, openStates: [...run.tasks.values()].filter(task => !task.closed).length },
       },
-      captured: { events: run.capturedEvents, commands: { ...run.commands, unfinished: run.openCommands.size } },
+      captured: { events: run.capturedEvents, commands: { ...run.commands, unfinished: [...run.commandStates.values()].filter(command => command.started && !command.finished).length } },
     };
   });
   return { schema: 'team-journal-summary/1', eventCount: events.length, runs: summaries, warnings, unmeasured: UNMEASURED };
