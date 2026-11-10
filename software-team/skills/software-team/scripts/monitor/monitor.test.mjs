@@ -266,3 +266,12 @@ test('session bound revokes oldest session without preventing fresh login',async
  assert.equal((await fetch(m.url+'/api/state',{headers:{Authorization:`Bearer ${tokens[0]}`}})).status,401);
  assert.equal((await fetch(m.url+'/api/state',{headers:{Authorization:`Bearer ${tokens.at(-1)}`}})).status,200);
 });
+
+test('Windows ACL helper isolates inherited PowerShell modules', {skip:process.platform!=='win32'},async t=>{
+ const modules=mkdtempSync(join(tmpdir(),'team-module-shadow-')),security=join(modules,'Microsoft.PowerShell.Security');mkdirSync(security);
+ writeFileSync(join(security,'Microsoft.PowerShell.Security.psd1'),"@{RootModule='shadow.psm1';ModuleVersion='99.0.0';FunctionsToExport=@('Get-Acl');CmdletsToExport=@()}");
+ writeFileSync(join(security,'shadow.psm1'),"function Get-Acl { throw 'Simulated incompatible parent module' };Export-ModuleMember -Function Get-Acl");
+ const original=process.env.PSModulePath;
+ process.env.PSModulePath=modules+';'+join(process.env.SystemRoot,'System32/WindowsPowerShell/v1.0/Modules');
+ try{const m=await fixture(t);assert.equal((await read(m,'/api/state')).status,200);}finally{if(original===undefined)delete process.env.PSModulePath;else process.env.PSModulePath=original;}
+});

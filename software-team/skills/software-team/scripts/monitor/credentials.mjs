@@ -1,6 +1,6 @@
 import { chmodSync, lstatSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
 
 // Apply and read back ACLs; no localized icacls output parsing or shell-built paths.
 const ACL_SCRIPT = `
@@ -11,6 +11,7 @@ $stage = 'inspect'
 try {
 $paths = ConvertFrom-Json $env:TEAM_MONITOR_PRIVATE_PATHS
 foreach ($entry in $paths) {
+  $stage = 'inspect'
   $item = Get-Item -LiteralPath $entry.path -Force
   if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'Reparse point refused' }
   $old = Get-Acl -LiteralPath $entry.path
@@ -36,7 +37,7 @@ foreach ($entry in $paths) {
   $r = $rules[0]
   if ($r.IdentityReference.Value -ne $sid.Value -or $r.AccessControlType -ne 'Allow' -or $r.IsInherited -or $r.FileSystemRights -ne 'FullControl') { throw 'Unexpected ACL rule' }
 }
-} catch { [Console]::Out.WriteLine('MONITOR_ACL_FAILURE:' + $stage + ':' + $_.Exception.GetType().Name + ':' + $_.FullyQualifiedErrorId); exit 1 }
+} catch { [Console]::Out.WriteLine('MONITOR_ACL_FAILURE:' + $stage + ':' + $_.Exception.GetType().Name + ':' + [int]$_.CategoryInfo.Category); exit 1 }
 `;
 export function protectPaths(paths, {platform=process.platform, execute=spawnSync}={}) {
   const entries=paths.flatMap(path=>{
@@ -46,9 +47,11 @@ export function protectPaths(paths, {platform=process.platform, execute=spawnSyn
   });
   if(platform==='win32') {
     const executable=join(process.env.SystemRoot||'C:\\Windows','System32','WindowsPowerShell','v1.0','powershell.exe');
-    const result=execute(executable,['-NoLogo','-NoProfile','-NonInteractive','-EncodedCommand',Buffer.from(ACL_SCRIPT,'utf16le').toString('base64')],{windowsHide:true,encoding:'utf8',timeout:30000,env:{...process.env,TEAM_MONITOR_PRIVATE_PATHS:JSON.stringify(entries)}});
+    const environment=Object.fromEntries(Object.entries(process.env).filter(([key])=>key.toLowerCase()!=='psmodulepath'));
+    environment.PSModulePath=join(dirname(executable),'Modules');
+    const result=execute(executable,['-NoLogo','-NoProfile','-NonInteractive','-EncodedCommand',Buffer.from(ACL_SCRIPT,'utf16le').toString('base64')],{windowsHide:true,encoding:'utf8',timeout:30000,env:{...environment,TEAM_MONITOR_PRIVATE_PATHS:JSON.stringify(entries)}});
     if(result.error || result.status!==0){
-      const stage=result.stdout?.match(/^MONITOR_ACL_FAILURE:((?:inspect|ownership|apply|verify):[A-Za-z0-9_.:, -]+)\r?$/m)?.[1]||'unavailable';
+      const stage=result.stdout?.match(/^MONITOR_ACL_FAILURE:((?:inspect|ownership|apply|verify):[A-Za-z0-9_.]+:[0-9]+)\r?$/m)?.[1]||'unavailable';
       throw new Error(`Cannot establish private Windows monitor ACLs (${stage})`);
     }
   } else {
