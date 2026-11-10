@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { join,dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
-import { startMonitor } from './monitor.mjs';
+import { startMonitor, emit } from './monitor.mjs';
 import { generateReport } from '../reports/report.mjs';
 const HERE=dirname(fileURLToPath(import.meta.url));
 async function fixture(t){const project=mkdtempSync(join(tmpdir(),'team-monitor-'));const m=await startMonitor({project,port:0});t.after(()=>m.close());const c=JSON.parse(readFileSync(m.connection));const post=(event,headers={})=>fetch(m.url+'/api/events',{method:'POST',headers:{'Authorization':`Bearer ${c.token}`,...headers},body:JSON.stringify(event)});return {...m,c,post,project};}
@@ -146,4 +146,36 @@ test('failed persistence leaves run index, sequence and published history unchan
  const response=await m.post(event);assert.equal(response.status,201);assert.equal((await response.json()).seq,2);
  assert.equal((await m.post(event)).status,400);
  assert.equal((await m.post({type:'task.updated',runId:'missing',taskId:'x',status:'running'})).status,400);
+});
+
+test('event identities deduplicate delivery, conflicts and concurrent retries',async t=>{
+ const m=await fixture(t);const start={type:'run.started',runId:'ids',title:'Identities',eventId:'global-start'};
+ const first=await m.post(start);assert.equal(first.status,201);const accepted=await first.json();
+ const retry=await m.post(start);assert.equal(retry.status,200);assert.deepEqual(await retry.json(),accepted);
+ assert.equal((await m.post({...start,title:'Conflict'})).status,409);
+ const event={type:'decision.recorded',runId:'ids',title:'Once',eventId:'one-decision'};
+ const responses=await Promise.all(Array.from({length:12},()=>m.post(event)));
+ assert.equal(responses.filter(r=>r.status===201).length,1);assert.equal(responses.filter(r=>r.status===200).length,11);
+ const journal=readFileSync(join(m.project,'.team-monitor/events.jsonl'),'utf8');assert.equal(journal.trim().split('\n').length,2);
+ const next=await m.post({type:'evidence.recorded',runId:'ids',title:'Next',eventId:'next'});assert.equal((await next.json()).seq,3);
+});
+
+
+test('idempotency recovers on restart and legacy records remain readable',async t=>{
+ const project=mkdtempSync(join(tmpdir(),'team-ids-'));let m=await startMonitor({project,port:0});
+ let c=JSON.parse(readFileSync(m.connection));
+ await emit(c,{type:'run.started',runId:'replay',title:'Replay',eventId:'start'});
+ // Legacy clients have no event identity.
+ await fetch(m.url+'/api/events',{method:'POST',headers:{Authorization:`Bearer ${c.token}`},body:JSON.stringify({type:'decision.recorded',runId:'replay',title:'Legacy'})});
+ const end={type:'run.finished',runId:'replay',status:'finished',eventId:'end'};const accepted=await emit(c,end);
+ await m.close();m=await startMonitor({project,port:0});t.after(()=>m.close());c=JSON.parse(readFileSync(m.connection));
+ assert.deepEqual(await emit(c,end),accepted);
+ assert.equal(readFileSync(join(project,'.team-monitor/events.jsonl'),'utf8').trim().split('\n').length,3);
+});
+test('client retries a lost response with the same generated identity',async t=>{
+ const m=await fixture(t),original=globalThis.fetch;let calls=0;const ids=[];
+ globalThis.fetch=async(url,options)=>{ids.push(JSON.parse(options.body).eventId);const response=await original(url,options);if(calls++===0){await response.arrayBuffer();throw new TypeError('Simulated lost response');}return response;};
+ try{const event=await emit(m.c,{type:'run.started',runId:'lost',title:'Lost reply'});assert.equal(event.seq,1);}finally{globalThis.fetch=original;}
+ assert.equal(calls,2);assert.equal(ids[0],ids[1]);assert.ok(ids[0]);
+ assert.equal(readFileSync(join(m.project,'.team-monitor/events.jsonl'),'utf8').trim().split('\n').length,1);
 });

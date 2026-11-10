@@ -13,7 +13,7 @@ const TYPES = new Set(['run.started','run.updated','run.finished','agent.updated
 const TASK_STATES = new Set(['planned','running','blocked','review','verified','released']);
 const AGENT_STATES = new Set(['working','waiting','done','blocked']);
 const RUN_STATES = new Set(['running','blocked','review','verified','failed','finished']);
-const fields = ['runId','agentId','taskId','to','title','summary','details','role','status','path','result','command','commandId','exitCode','signal','durationMs'];
+const fields = ['eventId','runId','agentId','taskId','to','title','summary','details','role','status','path','result','command','commandId','exitCode','signal','durationMs'];
 const fail = message => { throw new Error(message); };
 function equal(a,b) { const x=Buffer.from(a||''), y=Buffer.from(b||''); return x.length===y.length && timingSafeEqual(x,y); }
 export function validate(input, source='agent-reported') {
@@ -27,6 +27,7 @@ export function validate(input, source='agent-reported') {
     } else if (typeof v!=='string' || v.length>12000) fail(`Invalid ${k}`);
     out[k]=v;
   }
+  if (out.eventId!==undefined && !/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$/.test(out.eventId)) fail('Invalid eventId');
   if (!out.runId || !/^[\w.-]{1,100}$/.test(out.runId)) fail('Valid runId required');
   for (const k of ['agentId','taskId','to','commandId']) if (out[k] && !/^[\w./-]{1,160}$/.test(out[k])) fail(`Invalid ${k}`);
   if (out.type==='run.started' && !out.title) fail('Run title required');
@@ -76,7 +77,12 @@ async function startUnlocked({project,port}) {
     try { events=lines.map((line,i)=>{const e=JSON.parse(line); if(e.seq!==i+1 || typeof e.at!=='string') fail('Invalid sequence'); validate(e,e.source); return e;}); }
     catch { fail('Event journal is invalid. Preserve it and repair or archive it before restarting.'); }
   }
-  const runs=new Map(); for(const event of events)applyProjection(runs,event);
+  const runs=new Map(), identities=new Map();
+  const fingerprint=event=>JSON.stringify(validate(event,event.source));
+  for(const event of events){
+    applyProjection(runs,event);
+    if(event.eventId){if(identities.has(event.eventId))fail('Event journal has duplicate eventId; preserve and inspect it');identities.set(event.eventId,{event,payload:fingerprint(event)});}
+  }
   const token=randomBytes(32).toString('hex'), captureToken=randomBytes(32).toString('hex');
   const clients=new Set();
   let url='';
@@ -104,6 +110,11 @@ async function startUnlocked({project,port}) {
         const text=new TextDecoder('utf-8',{fatal:true}).decode(Buffer.concat(chunks,size));
         const source=equal(req.headers['x-capture-token'],captureToken)?'command-wrapper':'agent-reported';
         const value=validate(JSON.parse(text),source);
+        const prior=value.eventId && identities.get(value.eventId);
+        if(prior){
+          if(prior.payload!==fingerprint(value)){res.writeHead(409,{'Content-Type':'application/json'}).end(JSON.stringify({error:'Conflicting eventId'}));return;}
+          res.writeHead(200,{'Content-Type':'application/json'}).end(JSON.stringify(prior.event));return;
+        }
         if(value.type==='run.started' && runs.has(value.runId)) fail('Run already exists');
         if(value.type!=='run.started' && !runs.has(value.runId)) fail('Run does not exist');
         const transition=lifecycle(runs.get(value.runId),value);
@@ -117,6 +128,7 @@ async function startUnlocked({project,port}) {
         }
         const event={...value,seq:events.length+1,at:new Date().toISOString()};
         appendFileSync(journal,JSON.stringify(event)+'\n',{mode:0o600}); events.push(event); applyProjection(runs,event);
+        if(event.eventId)identities.set(event.eventId,{event,payload:fingerprint(event)});
         for(const client of clients)send(client,'update',event);
         res.writeHead(201,{'Content-Type':'application/json'}).end(JSON.stringify(event));
       } catch(error){res.writeHead(400,{'Content-Type':'application/json'}).end(JSON.stringify({error:error.message}));}
@@ -145,7 +157,17 @@ async function startUnlocked({project,port}) {
 }
 function options(args){const out={};for(let i=0;i<args.length;i++){if(args[i]==='--'){out.command=args.slice(i+1);break;}if(!args[i].startsWith('--') || !args[i+1]) fail('Expected --option value');out[args[i].slice(2)]=args[++i];}return out;}
 async function loadConnection(file){const c=JSON.parse(readFileSync(resolve(file),'utf8'));const u=new URL(c.url);if(u.protocol!=='http:' || u.hostname!=='127.0.0.1')fail('Connection must use loopback HTTP');return c;}
-async function emit(c,event,captured=false){const res=await fetch(c.url+'/api/events',{method:'POST',headers:{'Content-Type':'application/json','Authorization':`Bearer ${c.token}`,...(captured?{'X-Capture-Token':c.captureToken}:{})},body:JSON.stringify(event)});if(!res.ok)fail(`Monitor rejected event: ${await res.text()}`);return res.json();}
+export async function emit(c,event,captured=false){
+  const body=JSON.stringify({...event,eventId:event.eventId??randomBytes(16).toString('hex')});
+  let res;
+  for(let attempt=0;attempt<2;attempt++) {
+    try {
+      res=await fetch(c.url+'/api/events',{method:'POST',headers:{'Content-Type':'application/json','Authorization':`Bearer ${c.token}`,...(captured?{'X-Capture-Token':c.captureToken}:{})},body});
+      if(!res.ok)fail(`Monitor rejected event: ${await res.text()}`);
+      return await res.json();
+    } catch(error) { if((res && !res.ok) || attempt===1)throw error; }
+  }
+}
 async function main(){
   const [action,...args]=process.argv.slice(2), opt=options(args);
   if(action==='start'){
@@ -155,7 +177,7 @@ async function main(){
     let closing=false;for(const signal of ['SIGINT','SIGTERM'])process.on(signal,async()=>{if(closing)return;closing=true;await monitor.close();process.exit(0);});return;
   }
   if(!opt.connection)fail('--connection is required'); const c=await loadConnection(opt.connection);
-  if(action==='emit'){let input=opt.json;if(opt.file)input=readFileSync(opt.file,'utf8');if(!input)fail('--json or --file required');console.log(JSON.stringify(await emit(c,JSON.parse(input))));return;}
+  if(action==='emit'){let input=opt.json;if(opt.file)input=readFileSync(opt.file,'utf8');if(!input)fail('--json or --file required');console.log(JSON.stringify(await emit(c,{...JSON.parse(input),...(opt['event-id']?{eventId:opt['event-id']}:{})})));return;}
   if(action==='record'){
     if(!opt.run || !opt.command?.length)fail('record requires --run id -- command args');
     const commandId=randomBytes(8).toString('hex'), started=Date.now();
