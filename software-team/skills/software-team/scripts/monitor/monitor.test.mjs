@@ -1,4 +1,6 @@
 import test from 'node:test';
+import fs from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
 import http from 'node:http';
 import net from 'node:net';
 import assert from 'node:assert/strict';
@@ -143,9 +145,11 @@ test('failed persistence leaves run index, sequence and published history unchan
  const event={type:'run.started',runId:'retry',title:'Retry after storage recovery'};
  assert.equal((await m.post(event)).status,400);
  rmdirSync(file);renameSync(file+'.saved',file);
- const response=await m.post(event);assert.equal(response.status,201);assert.equal((await response.json()).seq,2);
- assert.equal((await m.post(event)).status,400);
- assert.equal((await m.post({type:'task.updated',runId:'missing',taskId:'x',status:'running'})).status,400);
+ assert.equal((await m.post(event)).status,503);
+ const state=await(await fetch(m.url+'/api/state')).json();assert.equal(state.events.length,1);
+ await m.close();const restarted=await startMonitor({project:m.project,port:0});t.after(()=>restarted.close());
+ const c=JSON.parse(readFileSync(restarted.connection));const response=await fetch(restarted.url+'/api/events',{method:'POST',headers:{Authorization:`Bearer ${c.token}`},body:JSON.stringify(event)});assert.equal(response.status,201);assert.equal((await response.json()).seq,2);
+
 });
 
 test('event identities deduplicate delivery, conflicts and concurrent retries',async t=>{
@@ -178,4 +182,15 @@ test('client retries a lost response with the same generated identity',async t=>
  try{const event=await emit(m.c,{type:'run.started',runId:'lost',title:'Lost reply'});assert.equal(event.seq,1);}finally{globalThis.fetch=original;}
  assert.equal(calls,2);assert.equal(ids[0],ids[1]);assert.ok(ids[0]);
  assert.equal(readFileSync(join(m.project,'.team-monitor/events.jsonl'),'utf8').trim().split('\n').length,1);
+});
+
+test('partial append failure stops all writes and preserves evidence for inspection',async t=>{
+ const m=await fixture(t),original=fs.appendFileSync;
+ fs.appendFileSync=(file,data,options)=>{original(file,data.slice(0,20),options);throw Object.assign(new Error('Simulated partial write'),{code:'ENOSPC'});};syncBuiltinESMExports();
+ try{assert.equal((await m.post({type:'run.started',runId:'partial',title:'Partial'})).status,400);}finally{fs.appendFileSync=original;syncBuiltinESMExports();}
+ const file=join(m.project,'.team-monitor/events.jsonl'),before=readFileSync(file,'utf8');
+ assert.equal((await m.post({type:'run.started',runId:'later',title:'Must not append'})).status,503);
+ assert.equal(readFileSync(file,'utf8'),before);assert.equal((await(await fetch(m.url+'/api/state')).json()).events.length,0);
+ await m.close();await assert.rejects(startMonitor({project:m.project,port:0}),/journal is invalid/);
+ assert.equal(readFileSync(file,'utf8'),before);
 });

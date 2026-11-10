@@ -62,8 +62,8 @@ export async function startMonitor({project=process.cwd(),port=4317}={}) {
   }
   try {
     const monitor=await startUnlocked({project,port});
-    const close=monitor.close;
-    monitor.close=async()=>{await close();if(existsSync(lock))unlinkSync(lock);};
+    const close=monitor.close;let closing;
+    monitor.close=()=>closing??=(async()=>{await close();if(existsSync(lock))unlinkSync(lock);})();
     return monitor;
   }catch(error){if(existsSync(lock))unlinkSync(lock);throw error;}
 }
@@ -71,7 +71,7 @@ async function startUnlocked({project,port}) {
   project=resolve(project);
   const dir=join(project,'.team-monitor'); mkdirSync(dir,{recursive:true,mode:0o700}); chmodSync(dir,0o700);
   const journal=join(dir,'events.jsonl'), connection=join(dir,'connection.json');
-  let events=[];
+  let events=[],storageFailed=false;
   if(existsSync(journal)) {
     const lines=readFileSync(journal,'utf8').split('\n').filter(Boolean);
     try { events=lines.map((line,i)=>{const e=JSON.parse(line); if(e.seq!==i+1 || typeof e.at!=='string') fail('Invalid sequence'); validate(e,e.source); return e;}); }
@@ -104,6 +104,7 @@ async function startUnlocked({project,port}) {
     }
     if(req.method==='POST' && path==='/api/events'){
       if(!equal(req.headers.authorization,`Bearer ${token}`)){res.writeHead(401).end('Unauthorized');return;}
+      if(storageFailed){res.writeHead(503).end('Journal write failed; restart after inspecting storage and journal');return;}
       const chunks=[]; let size=0;
       try {
         for await(const chunk of req){size+=chunk.length;if(size>65536) fail('Event too large');chunks.push(chunk);}
@@ -127,7 +128,9 @@ async function startUnlocked({project,port}) {
           if(record.runId!==value.runId || record.jobId!==parts[2] || `r${String(record.revision).padStart(3,'0')}`!==parts[3]) fail('Report identity does not match event');
         }
         const event={...value,seq:events.length+1,at:new Date().toISOString()};
-        appendFileSync(journal,JSON.stringify(event)+'\n',{mode:0o600}); events.push(event); applyProjection(runs,event);
+        try{appendFileSync(journal,JSON.stringify(event)+'\n',{mode:0o600});}
+        catch(error){storageFailed=true;throw error;}
+        events.push(event); applyProjection(runs,event);
         if(event.eventId)identities.set(event.eventId,{event,payload:fingerprint(event)});
         for(const client of clients)send(client,'update',event);
         res.writeHead(201,{'Content-Type':'application/json'}).end(JSON.stringify(event));
