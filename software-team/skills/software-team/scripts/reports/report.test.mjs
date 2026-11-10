@@ -33,6 +33,53 @@ test('rejects missing translation, dangling evidence and unsupported verificatio
   assert.throws(() => validateReport({ ...data, evidence: [{ ...data.evidence[0], status: 'failed' }] }), /passing evidence/);
   assert.throws(() => validateReport({ ...data, jobId: '../escape' }), /Invalid jobId/);
 });
+function v2(input = fixture()) {
+  const data = { ...input, evidenceVersion: 2, reviewStatus: 'pending', snapshot: { baseSha: '1'.repeat(40), headSha: '2'.repeat(40), diffSha256: 'a'.repeat(64) }, verificationEnvironment: 'Node 24.1.0 on Windows 11' };
+  data.evidence = data.evidence.map(e => ({ ...e, environment: 'Node 24.1.0 on Windows 11', basis: { ...data.snapshot } }));
+  return data;
+}
+test('passing checks remain distinct from independent review pending', () => {
+  const data = v2();
+  assert.equal(validateReport(data).technicalStatus, 'implemented');
+  assert.equal(data.evidence[0].status, 'passed');
+  assert.equal(data.reviewStatus, 'pending');
+  const result = generateReport(data, { project: mkdtempSync(join(tmpdir(), 'team-review-pending-')) });
+  const record = JSON.parse(readFileSync(join(result.directory, 'report.json')));
+  const html = readFileSync(join(result.directory, 'report.html'), 'utf8');
+  const english = readFileSync(join(result.directory, 'report.en.md'), 'utf8');
+  const persian = readFileSync(join(result.directory, 'report.fa.md'), 'utf8');
+  assert.equal(record.evidence[0].status, 'passed');
+  assert.equal(record.reviewStatus, 'pending');
+  assert.match(html, /pending/);
+  assert.ok(html.includes('Checks passed; independent review pending.'));
+  assert.ok(english.includes('Checks passed; independent review pending.'));
+  assert.ok(persian.includes('بررسی‌ها موفق؛ بازبینی مستقل در انتظار است.'));
+  assert.ok(html.includes(data.snapshot.diffSha256));
+  assert.throws(() => validateReport({ ...data, technicalStatus: 'verified' }), /independent review/);
+  assert.throws(() => validateReport({ ...data, evidence: [{ ...data.evidence[0], basis: { ...data.snapshot, diffSha256: 'b'.repeat(64) } }] }), /stale/);
+});
+test('verified v2 report requires matching independent review evidence', () => {
+  const data = v2();
+  data.technicalStatus = 'verified';
+  data.reviewStatus = 'independent';
+  data.reviewEvidence = { reviewer: 'Reviewer A', baseSha: data.snapshot.baseSha, headSha: data.snapshot.headSha, diffSha256: data.snapshot.diffSha256, scope: 'Changed report schema and renderer', findings: [] };
+  assert.equal(validateReport(data).technicalStatus, 'verified');
+  const result = generateReport(data, { project: mkdtempSync(join(tmpdir(), 'team-review-bound-')) });
+  const record = JSON.parse(readFileSync(join(result.directory, 'report.json')));
+  assert.equal(record.reviewEvidence.reviewer, 'Reviewer A');
+  assert.equal(record.reviewEvidence.diffSha256, record.snapshot.diffSha256);
+  assert.throws(() => validateReport({ ...data, reviewEvidence: undefined }), /reviewer identity/);
+  assert.throws(() => validateReport({ ...data, reviewEvidence: { ...data.reviewEvidence, diffSha256: 'b'.repeat(64) } }), /stale/);
+});
+test('legacy v1 verified report inputs remain valid and are explicitly labeled legacy', () => {
+  const data = fixture();
+  data.technicalStatus = 'verified';
+  data.reviewStatus = 'independent';
+  assert.equal(validateReport(data).technicalStatus, 'verified');
+  const result = generateReport(data, { project: mkdtempSync(join(tmpdir(), 'team-legacy-report-')) });
+  assert.equal(JSON.parse(readFileSync(join(result.directory, 'report.json'))).evidenceVersion, 1);
+  assert.match(readFileSync(join(result.directory, 'report.en.md'), 'utf8'), /legacy; unbound snapshot/);
+});
 test('HTML and SVG escape untrusted text and avoid executable content', () => {
   const data = fixture(); data.title = bi('<script>alert(1)</script>'); data.diagram.nodes[0].label = bi('<img onerror=alert(1)>');
   const result = generateReport(data, { project: mkdtempSync(join(tmpdir(), 'team-escape-')) });

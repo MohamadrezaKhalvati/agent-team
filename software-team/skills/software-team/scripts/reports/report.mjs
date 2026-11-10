@@ -16,9 +16,11 @@ const labels = {
 const translations = { met: 'برآورده‌شده', partial: 'بخشی انجام‌شده', 'not-met': 'برآورده‌نشده', deferred: 'به‌تعویق‌افتاده', passed: 'موفق', failed: 'ناموفق', 'not-run': 'اجرانشده', inconclusive: 'نامشخص', verified: 'تأیید فنی', implemented: 'پیاده‌سازی‌شده', blocked: 'مسدود', released: 'منتشرشده', 'not-released': 'منتشرنشده', independent: 'مستقل', 'self-review-only': 'فقط خودبازبینی', 'not-reviewed': 'بازبینی‌نشده', current: 'وضعیت موجود', proposed: 'پیشنهادی' };
 const escape = value => String(value).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const text = (value, lang) => value[lang];
-const status = (value, lang) => lang === 'fa' ? (translations[value] || value) : value;
+const status = (value, lang) => lang === 'fa' ? (value === 'pending' ? 'در انتظار' : translations[value] || value) : value;
 const assert = (condition, message) => { if (!condition) throw new Error(message); };
 const idPattern = /^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$/;
+const shaPattern = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/i;
+const digestPattern = /^[a-f0-9]{64}$/i;
 function bilingual(value, name) {
   for (const lang of ['en', 'fa']) assert(value && typeof value[lang] === 'string' && value[lang].trim() && value[lang].length <= 30000, `${name}.${lang} must be non-empty text`);
 }
@@ -30,7 +32,14 @@ export function validateReport(data) {
   assert(typeof data.dirtyWorktree === 'boolean', 'dirtyWorktree must be explicit');
   assert(['implemented', 'verified', 'partial', 'blocked'].includes(data.technicalStatus), 'Invalid technical status');
   assert(['released', 'not-released'].includes(data.releaseStatus), 'Invalid release status');
-  assert(['independent', 'self-review-only', 'not-reviewed'].includes(data.reviewStatus), 'Invalid review status');
+  assert(['independent', 'self-review-only', 'not-reviewed', 'pending'].includes(data.reviewStatus), 'Invalid review status');
+  const evidenceVersion = data.evidenceVersion ?? 1;
+  assert([1, 2].includes(evidenceVersion), 'Invalid evidence version');
+  if (evidenceVersion === 2) {
+    const snapshot = data.snapshot;
+    assert(snapshot && shaPattern.test(snapshot.baseSha) && shaPattern.test(snapshot.headSha) && digestPattern.test(snapshot.diffSha256), 'Evidence v2 requires immutable base, head, and diff identities');
+    assert(typeof data.verificationEnvironment === 'string' && data.verificationEnvironment.trim() && data.verificationEnvironment.length <= 1000, 'Evidence v2 requires verificationEnvironment');
+  }
   bilingual(data.title, 'title'); bilingual(data.summary, 'summary');
   if (data.revision > 1) assert(data.parent && Number.isInteger(data.parent.revision) && data.parent.revision > 0 && data.parent.revision < data.revision && typeof data.parent.runId === 'string' && data.parent.runId.trim() && data.parent.runId !== data.runId, 'Later revisions require parent revision and runId');
   else assert(!data.parent, 'First revision must not have a parent');
@@ -43,15 +52,37 @@ export function validateReport(data) {
     unique(e.id); evidenceIds.add(e.id); bilingual(e.label, 'evidence.label'); bilingual(e.method, 'evidence.method');
     assert(['passed', 'failed', 'not-run', 'inconclusive'].includes(e.status), 'Invalid evidence status');
     assert(typeof e.reference === 'string' && e.reference.trim() && e.reference.length < 4000, 'Evidence reference required');
+    if (evidenceVersion === 2 && e.status !== 'not-run') {
+      assert(typeof e.environment === 'string' && e.environment.trim() && e.environment.length <= 1000, 'Executed evidence needs its environment');
+      const snapshot = data.snapshot, basis = e.basis;
+      assert(basis && basis.baseSha === snapshot.baseSha && basis.headSha === snapshot.headSha && basis.diffSha256 === snapshot.diffSha256, 'Executed evidence is missing or stale for the delivered snapshot');
+    }
   }
   for (const r of data.requirements) {
     unique(r.id); bilingual(r.text, 'requirement.text'); assert(['met', 'partial', 'not-met', 'deferred'].includes(r.status), 'Invalid requirement status');
     assert(Array.isArray(r.evidenceIds) && r.evidenceIds.every(id => evidenceIds.has(id)), 'Unknown evidence reference');
     if (r.status === 'met') assert(r.evidenceIds.some(id => data.evidence.find(e => e.id === id)?.status === 'passed'), 'Met requirement needs passing evidence');
   }
+  if (evidenceVersion === 2 && data.reviewStatus === 'independent') {
+    const review = data.reviewEvidence, snapshot = data.snapshot;
+    assert(review && typeof review.reviewer === 'string' && review.reviewer.trim() && review.reviewer.length <= 300, 'Independent review requires reviewer identity');
+    assert(review.baseSha === snapshot.baseSha && review.headSha === snapshot.headSha && review.diffSha256 === snapshot.diffSha256, 'Independent review evidence is missing or stale for the delivered snapshot');
+    assert(typeof review.scope === 'string' && review.scope.trim() && review.scope.length <= 4000, 'Independent review requires scope');
+    assert(Array.isArray(review.findings) && review.findings.length <= 200, 'Independent review findings must be a bounded array');
+    for (const finding of review.findings) {
+      assert(typeof finding.id === 'string' && idPattern.test(finding.id), 'Invalid review finding ID');
+      assert(['critical', 'high', 'medium', 'low', 'info'].includes(finding.severity), 'Invalid review finding severity');
+      assert(['open', 'resolved', 'accepted', 'not-applicable'].includes(finding.disposition), 'Invalid review finding disposition');
+      assert(typeof finding.summary === 'string' && finding.summary.trim() && finding.summary.length <= 2000, 'Review finding summary required');
+    }
+  }
   if (data.technicalStatus === 'verified') {
     assert(data.reviewStatus === 'independent', 'Verified completion requires independent review');
     assert(data.requirements.every(r => r.status === 'met'), 'Verified completion requires all listed acceptance criteria met');
+    if (evidenceVersion === 2) {
+      assert(data.reviewEvidence, 'Verified completion requires independent review evidence');
+      assert(!data.reviewEvidence.findings.some(f => f.disposition === 'open' && ['critical', 'high'].includes(f.severity)), 'Verified completion cannot have open critical or high review findings');
+    }
   }
   for (const key of SECTION_IDS) bilingual(data.sections?.[key], `sections.${key}`);
   const d = data.diagram; assert(d && ['current', 'proposed'].includes(d.kind), 'Diagram must identify current or proposed state');
@@ -79,7 +110,14 @@ function resume(data, lang) {
 }
 function article(data, lang, at) {
   const l = labels[lang];
-  const metadata = [[l.status, status(data.technicalStatus, lang)], [l.release, status(data.releaseStatus, lang)], [l.review, status(data.reviewStatus, lang)], [l.code, data.codeVersion], [l.dirty, data.dirtyWorktree ? (lang === 'fa' ? 'بله؛ گزارش شامل تغییرات ثبت‌نشده است' : 'Yes; report includes uncommitted changes') : (lang === 'fa' ? 'خیر' : 'No')]];
+  const labels2 = lang === 'fa' ? { format: 'نسخه شواهد', snapshot: 'نسخه تحویلی', reviewer: 'بازبین', reviewed: 'نسخه بازبینی‌شده', checksReview: 'بررسی‌ها / بازبینی مستقل' } : { format: 'Evidence format', snapshot: 'Delivered snapshot', reviewer: 'Reviewer', reviewed: 'Reviewed snapshot', checksReview: 'Checks / independent review' };
+  const allChecksPassed = data.evidence.length > 0 && data.evidence.every(e => e.status === 'passed');
+  const reviewPending = ['pending', 'not-reviewed', 'self-review-only'].includes(data.reviewStatus);
+  const checksReview = allChecksPassed && reviewPending ? (lang === 'fa' ? 'بررسی‌ها موفق؛ بازبینی مستقل در انتظار است.' : 'Checks passed; independent review pending.') : null;
+  const metadata = [[l.status, status(data.technicalStatus, lang)], [l.release, status(data.releaseStatus, lang)], [l.review, status(data.reviewStatus, lang)], [l.code, data.codeVersion], [l.dirty, data.dirtyWorktree ? (lang === 'fa' ? 'بله؛ گزارش شامل تغییرات ثبت‌نشده است' : 'Yes; report includes uncommitted changes') : (lang === 'fa' ? 'خیر' : 'No')], [labels2.format, `v${data.evidenceVersion ?? 1}${(data.evidenceVersion ?? 1) === 1 ? (lang === 'fa' ? ' (قدیمی؛ بدون پیوند به نسخه)' : ' (legacy; unbound snapshot)') : ''}`]];
+  if (checksReview) metadata.push([labels2.checksReview, checksReview]);
+  if (data.evidenceVersion === 2) metadata.push([labels2.snapshot, `${data.snapshot.baseSha}..${data.snapshot.headSha} / sha256:${data.snapshot.diffSha256}`]);
+  if (data.reviewEvidence) metadata.push([labels2.reviewer, data.reviewEvidence.reviewer], [labels2.reviewed, `${data.reviewEvidence.baseSha}..${data.reviewEvidence.headSha} / sha256:${data.reviewEvidence.diffSha256}`]);
   const requirements = data.requirements.map(r => `<tr><td><bdi>${escape(r.id)}</bdi></td><td>${escape(text(r.text, lang))}</td><td>${escape(status(r.status, lang))}</td><td>${escape(r.evidenceIds.join(', '))}</td></tr>`).join('');
   const evidence = data.evidence.map(e => `<li id="${lang}-${escape(e.id)}"><strong><bdi>${escape(e.id)}</bdi> · ${escape(text(e.label, lang))}</strong><span class="tag">${escape(status(e.status, lang))}</span><p>${escape(text(e.method, lang))}</p><pre>${escape(e.reference)}</pre></li>`).join('');
   const sections = SECTION_IDS.map((key, i) => `<section><h2>${headings[lang][i]}</h2><p class="prose">${escape(text(data.sections[key], lang))}</p></section>`).join('');
@@ -90,7 +128,15 @@ export function renderHtml(data, at) {
 }
 function markdown(data, lang, at) {
   const l = labels[lang];
-  const lines = [`# ${text(data.title, lang)}`, '', text(data.summary, lang), '', `${data.jobId} / r${String(data.revision).padStart(3, '0')} / ${data.runId} / ${at}`, '', `> ${l.pending}`, '', `- ${l.status}: ${status(data.technicalStatus, lang)}`, `- ${l.release}: ${status(data.releaseStatus, lang)}`, `- ${l.review}: ${status(data.reviewStatus, lang)}`, `- ${l.code}: ${data.codeVersion}`, `- ${l.dirty}: ${data.dirtyWorktree}`, '', `## ${l.requirements}`, ''];
+  const checksReview = data.evidence.length > 0 && data.evidence.every(e => e.status === 'passed') && ['pending', 'not-reviewed', 'self-review-only'].includes(data.reviewStatus);
+  const pendingText = lang === 'fa' ? 'بررسی‌ها موفق؛ بازبینی مستقل در انتظار است.' : 'Checks passed; independent review pending.';
+  const fields = lang === 'fa' ? { format: 'نسخه شواهد', snapshot: 'نسخه تحویلی', environment: 'محیط راستی‌آزمایی', reviewer: 'بازبین', reviewed: 'نسخه بازبینی‌شده', scope: 'دامنه بازبینی' } : { format: 'Evidence format', snapshot: 'Delivered snapshot', environment: 'Verification environment', reviewer: 'Reviewer', reviewed: 'Reviewed snapshot', scope: 'Review scope' };
+  const format = `v${data.evidenceVersion ?? 1}${(data.evidenceVersion ?? 1) === 1 ? (lang === 'fa' ? ' (قدیمی؛ بدون پیوند به نسخه)' : ' (legacy; unbound snapshot)') : ''}`;
+  const lines = [`# ${text(data.title, lang)}`, '', text(data.summary, lang), '', `${data.jobId} / r${String(data.revision).padStart(3, '0')} / ${data.runId} / ${at}`, '', `> ${l.pending}`, '', `- ${l.status}: ${status(data.technicalStatus, lang)}`, `- ${l.release}: ${status(data.releaseStatus, lang)}`, `- ${l.review}: ${status(data.reviewStatus, lang)}`, `- ${l.code}: ${data.codeVersion}`, `- ${l.dirty}: ${data.dirtyWorktree}`, `- ${fields.format}: ${format}`];
+  if (checksReview) lines.push(`- ${pendingText}`);
+  if (data.evidenceVersion === 2) lines.push(`- ${fields.snapshot}: ${data.snapshot.baseSha}..${data.snapshot.headSha} / sha256:${data.snapshot.diffSha256}`, `- ${fields.environment}: ${data.verificationEnvironment}`);
+  if (data.reviewEvidence) lines.push(`- ${fields.reviewer}: ${data.reviewEvidence.reviewer}`, `- ${fields.reviewed}: ${data.reviewEvidence.baseSha}..${data.reviewEvidence.headSha} / sha256:${data.reviewEvidence.diffSha256}`, `- ${fields.scope}: ${data.reviewEvidence.scope}`);
+  lines.push('', `## ${l.requirements}`, '');
   for (const r of data.requirements) lines.push(`- **${r.id}** — ${text(r.text, lang)} — ${status(r.status, lang)} — ${r.evidenceIds.join(', ') || '—'}`);
   lines.push('', `## ${l.diagram} · ${status(data.diagram.kind, lang)}`, '', `![${l.diagram}](diagram.${lang}.svg)`, '', text(data.diagram.caption, lang));
   SECTION_IDS.forEach((key, i) => lines.push('', `## ${headings[lang][i]}`, '', text(data.sections[key], lang)));
@@ -127,7 +173,7 @@ export function generateReport(input, { project }) {
   }
   const staging = mkdtempSync(join(job, '.report-'));
   try {
-    const record = { ...data, generatedAt: at, inputSha256: createHash('sha256').update(JSON.stringify(data)).digest('hex'), userAcceptance: 'pending' };
+    const record = { ...data, evidenceVersion: data.evidenceVersion ?? 1, generatedAt: at, inputSha256: createHash('sha256').update(JSON.stringify(data)).digest('hex'), userAcceptance: 'pending' };
     const files = { 'report.json': JSON.stringify(record, null, 2) + '\n', 'report.html': renderHtml(data, at), 'report.en.md': markdown(data, 'en', at), 'report.fa.md': markdown(data, 'fa', at), 'diagram.en.svg': diagramSvg(data, 'en'), 'diagram.fa.svg': diagramSvg(data, 'fa') };
     for (const [name, contents] of Object.entries(files)) writeFileSync(join(staging, name), contents);
     assert(!existsSync(target), 'Report revision already exists');

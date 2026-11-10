@@ -1,10 +1,13 @@
 {
   "schemaVersion": 1,
+  "evidenceVersion": 2,
   "jobId": "example-job",
   "revision": 1,
   "runId": "example-run",
   "codeVersion": "Replace with inspected commit and change snapshot",
   "dirtyWorktree": false,
+  "snapshot": {"baseSha": "0000000000000000000000000000000000000000", "headSha": "1111111111111111111111111111111111111111", "diffSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+  "verificationEnvironment": "Replace with actual runtime and platform; this is an example only.",
   "technicalStatus": "partial",
   "releaseStatus": "not-released",
   "reviewStatus": "not-reviewed",
