@@ -14,9 +14,10 @@ const labels = {
   fa: { requirements: 'نیازمندی‌ها و پذیرش', evidence: 'شواهد راستی‌آزمایی', diagram: 'معماری / جریان کار', coverage: 'پوشش معیارهای پذیرش', status: 'وضعیت فنی', release: 'انتشار', review: 'بازبینی', code: 'نسخه کد', dirty: 'تغییرات ثبت‌نشده در گیت', pending: 'پذیرش شما در انتظار بررسی است. اتمام فنی به معنی مجوز انتشار نیست.', none: 'موردی ثبت نشده است؛ این به معنی نبود مشکل نیست.', resume: 'درخواست دور اصلاح بعدی', caution: 'شواهد توسط تیم ارائه شده‌اند. ساخت این گزارش، ادعاهای آن را مستقلاً تأیید نمی‌کند.', parent: 'گزارش دور قبل' },
 };
 const translations = { met: 'برآورده‌شده', partial: 'بخشی انجام‌شده', 'not-met': 'برآورده‌نشده', deferred: 'به‌تعویق‌افتاده', passed: 'موفق', failed: 'ناموفق', 'not-run': 'اجرانشده', inconclusive: 'نامشخص', verified: 'تأیید فنی', implemented: 'پیاده‌سازی‌شده', blocked: 'مسدود', released: 'منتشرشده', 'not-released': 'منتشرنشده', independent: 'مستقل', 'self-review-only': 'فقط خودبازبینی', 'not-reviewed': 'بازبینی‌نشده', current: 'وضعیت موجود', proposed: 'پیشنهادی' };
+const reviewTranslations = { critical: 'بحرانی', high: 'زیاد', medium: 'متوسط', low: 'کم', info: 'اطلاعاتی', open: 'باز', resolved: 'رفع‌شده', accepted: 'پذیرفته‌شده', 'not-applicable': 'نامرتبط' };
 const escape = value => String(value).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const text = (value, lang) => value[lang];
-const status = (value, lang) => lang === 'fa' ? (value === 'pending' ? 'در انتظار' : translations[value] || value) : value;
+const status = (value, lang) => lang === 'fa' ? (value === 'pending' ? 'در انتظار' : translations[value] || reviewTranslations[value] || value) : value;
 const assert = (condition, message) => { if (!condition) throw new Error(message); };
 const idPattern = /^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$/;
 const shaPattern = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/i;
@@ -24,7 +25,7 @@ const digestPattern = /^[a-f0-9]{64}$/i;
 function bilingual(value, name) {
   for (const lang of ['en', 'fa']) assert(value && typeof value[lang] === 'string' && value[lang].trim() && value[lang].length <= 30000, `${name}.${lang} must be non-empty text`);
 }
-export function validateReport(data) {
+function validateReportData(data, { allowLegacy = false, publishedLegacy = false } = {}) {
   assert(data?.schemaVersion === 1, 'schemaVersion must be 1');
   assert(typeof data.jobId === 'string' && idPattern.test(data.jobId), 'Invalid jobId');
   assert(Number.isInteger(data.revision) && data.revision > 0 && data.revision < 10000, 'Invalid revision');
@@ -33,8 +34,13 @@ export function validateReport(data) {
   assert(['implemented', 'verified', 'partial', 'blocked'].includes(data.technicalStatus), 'Invalid technical status');
   assert(['released', 'not-released'].includes(data.releaseStatus), 'Invalid release status');
   assert(['independent', 'self-review-only', 'not-reviewed', 'pending'].includes(data.reviewStatus), 'Invalid review status');
-  const evidenceVersion = data.evidenceVersion ?? 1;
-  assert([1, 2].includes(evidenceVersion), 'Invalid evidence version');
+  const legacyInput = allowLegacy && (data.evidenceVersion === undefined || data.evidenceVersion === 1);
+  assert(data.evidenceVersion === 2 || legacyInput, 'New reports require explicit evidenceVersion: 2');
+  const evidenceVersion = legacyInput ? 1 : data.evidenceVersion;
+  if (legacyInput) {
+    const hasV2Bindings = data.snapshot !== undefined || data.verificationEnvironment !== undefined || data.reviewEvidence !== undefined || (Array.isArray(data.evidence) && data.evidence.some(e => e.basis !== undefined || e.environment !== undefined));
+    assert(!hasV2Bindings, 'Legacy evidenceVersion: 1 cannot include v2 snapshot or review bindings');
+  }
   if (evidenceVersion === 2) {
     const snapshot = data.snapshot;
     assert(snapshot && shaPattern.test(snapshot.baseSha) && shaPattern.test(snapshot.headSha) && digestPattern.test(snapshot.diffSha256), 'Evidence v2 requires immutable base, head, and diff identities');
@@ -61,7 +67,10 @@ export function validateReport(data) {
   for (const r of data.requirements) {
     unique(r.id); bilingual(r.text, 'requirement.text'); assert(['met', 'partial', 'not-met', 'deferred'].includes(r.status), 'Invalid requirement status');
     assert(Array.isArray(r.evidenceIds) && r.evidenceIds.every(id => evidenceIds.has(id)), 'Unknown evidence reference');
-    if (r.status === 'met') assert(r.evidenceIds.some(id => data.evidence.find(e => e.id === id)?.status === 'passed'), 'Met requirement needs passing evidence');
+    if (r.status === 'met') {
+      const linked = r.evidenceIds.map(id => data.evidence.find(e => e.id === id));
+      assert(linked.length > 0 && (publishedLegacy ? linked.some(e => e.status === 'passed') : linked.every(e => e.status === 'passed')), 'Met requirement needs all linked required checks to pass');
+    }
   }
   if (evidenceVersion === 2 && data.reviewStatus === 'independent') {
     const review = data.reviewEvidence, snapshot = data.snapshot;
@@ -73,7 +82,8 @@ export function validateReport(data) {
       assert(typeof finding.id === 'string' && idPattern.test(finding.id), 'Invalid review finding ID');
       assert(['critical', 'high', 'medium', 'low', 'info'].includes(finding.severity), 'Invalid review finding severity');
       assert(['open', 'resolved', 'accepted', 'not-applicable'].includes(finding.disposition), 'Invalid review finding disposition');
-      assert(typeof finding.summary === 'string' && finding.summary.trim() && finding.summary.length <= 2000, 'Review finding summary required');
+      bilingual(finding.summary, 'review finding summary');
+      for (const lang of ['en', 'fa']) assert(finding.summary[lang].length <= 2000, 'Review finding summary is too long');
     }
   }
   if (data.technicalStatus === 'verified') {
@@ -94,6 +104,12 @@ export function validateReport(data) {
   for (const edge of d.edges) assert(nodes.has(edge.from) && nodes.has(edge.to) && edge.from !== edge.to, 'Invalid diagram edge');
   return data;
 }
+export function validateReport(data) { return validateReportData(data); }
+export function validatePublishedReport(data) { return validateReportData(data, { allowLegacy: true, publishedLegacy: true }); }
+export function validateLegacyReport(data) {
+  assert(data?.evidenceVersion === undefined || data.evidenceVersion === 1, 'Legacy compatibility accepts only evidenceVersion: 1 inputs');
+  return validateReportData(data, { allowLegacy: true });
+}
 export function diagramSvg(data, lang) {
   const nodes = data.diagram.nodes, width = 760, height = nodes.length * 100 + 20;
   const positions = new Map(nodes.map((n, i) => [n.id, { x: 160, y: 20 + i * 100 }]));
@@ -104,6 +120,18 @@ export function diagramSvg(data, lang) {
 function coverage(data, lang) {
   const counts = ['met', 'partial', 'not-met', 'deferred'].map(key => [key, data.requirements.filter(r => r.status === key).length]);
   return `<div class="coverage" aria-label="${labels[lang].coverage}">${counts.map(([key, count]) => `<div><strong>${count}</strong><span>${escape(status(key, lang))}</span><meter min="0" max="${data.requirements.length}" value="${count}">${count}</meter></div>`).join('')}</div>`;
+}
+const reviewLabels = {
+  en: { findings: 'Structured independent review findings', reviewer: 'Reviewer', scope: 'Scope', severity: 'Severity', disposition: 'Disposition', none: 'No findings recorded.' },
+  fa: { findings: 'یافته‌های ساختاریافته بازبینی مستقل', reviewer: 'بازبین', scope: 'دامنه', severity: 'شدت', disposition: 'وضعیت', none: 'یافته‌ای ثبت نشده است.' },
+};
+function reviewFindings(data, lang) {
+  if (!data.reviewEvidence) return '';
+  const l = reviewLabels[lang];
+  const entries = data.reviewEvidence.findings.length
+    ? data.reviewEvidence.findings.map(f => `<li><strong><bdi>${escape(f.id)}</bdi></strong> · ${escape(l.severity)}: ${escape(status(f.severity, lang))} · ${escape(l.disposition)}: ${escape(status(f.disposition, lang))}<p>${escape(text(f.summary, lang))}</p></li>`).join('')
+    : `<li>${escape(l.none)}</li>`;
+  return `<section><h2>${escape(l.findings)}</h2><p>${escape(l.reviewer)}: ${escape(data.reviewEvidence.reviewer)}</p><p>${escape(l.scope)}: ${escape(data.reviewEvidence.scope)}</p><ul>${entries}</ul></section>`;
 }
 function resume(data, lang) {
   return lang === 'fa' ? `کار ${data.jobId} را از گزارش r${String(data.revision).padStart(3, '0')} ادامه بده. درخواست‌های اصلاح من: [شناسه مورد و تغییر موردنظر]. ابتدا کد فعلی و این گزارش را بررسی کن، اثر تغییرها و معیار پذیرش را مشخص کن و سپس در محدوده اختیار اجرا و بازبینی کن. گزارش قبلی را حفظ کن و گزارش دور بعد را فارسی و انگلیسی بساز.` : `Continue job ${data.jobId} from report r${String(data.revision).padStart(3, '0')}. My requested changes: [item IDs and desired changes]. Inspect the current code and this report, identify impacts and acceptance criteria, then implement and review within agreed authority. Preserve the previous report and create the next revision in Persian and English.`;
@@ -120,7 +148,7 @@ function article(data, lang, at) {
   if (data.reviewEvidence) metadata.push([labels2.reviewer, data.reviewEvidence.reviewer], [labels2.reviewed, `${data.reviewEvidence.baseSha}..${data.reviewEvidence.headSha} / sha256:${data.reviewEvidence.diffSha256}`]);
   const requirements = data.requirements.map(r => `<tr><td><bdi>${escape(r.id)}</bdi></td><td>${escape(text(r.text, lang))}</td><td>${escape(status(r.status, lang))}</td><td>${escape(r.evidenceIds.join(', '))}</td></tr>`).join('');
   const evidence = data.evidence.map(e => `<li id="${lang}-${escape(e.id)}"><strong><bdi>${escape(e.id)}</bdi> · ${escape(text(e.label, lang))}</strong><span class="tag">${escape(status(e.status, lang))}</span><p>${escape(text(e.method, lang))}</p><pre>${escape(e.reference)}</pre></li>`).join('');
-  const sections = SECTION_IDS.map((key, i) => `<section><h2>${headings[lang][i]}</h2><p class="prose">${escape(text(data.sections[key], lang))}</p></section>`).join('');
+  const sections = SECTION_IDS.map((key, i) => `<section><h2>${headings[lang][i]}</h2><p class="prose">${escape(text(data.sections[key], lang))}</p></section>`).join('') + reviewFindings(data, lang);
   return `<article id="report-${lang}" lang="${lang}" dir="${lang === 'fa' ? 'rtl' : 'ltr'}"><p class="eyebrow">${lang === 'fa' ? 'گزارش فنی · فارسی' : 'TECHNICAL REPORT · ENGLISH'}</p><h1>${escape(text(data.title, lang))}</h1><p class="subtitle">${escape(text(data.summary, lang))}</p><p class="meta"><bdi>${escape(data.jobId)} / r${String(data.revision).padStart(3, '0')} / ${escape(data.runId)} / ${at}</bdi></p><aside>${l.pending}</aside><dl>${metadata.map(([k, v]) => `<div><dt>${k}</dt><dd><bdi>${escape(v)}</bdi></dd></div>`).join('')}</dl><h2>${l.coverage}</h2>${coverage(data, lang)}<h2>${l.requirements}</h2><div class="table-wrap"><table><thead><tr>${(lang === 'fa' ? ['شناسه', 'نیازمندی', 'وضعیت', 'شواهد'] : ['ID', 'Requirement', 'Status', 'Evidence']).map(s => `<th>${s}</th>`).join('')}</tr></thead><tbody>${requirements}</tbody></table></div><h2>${l.diagram} · ${escape(status(data.diagram.kind, lang))}</h2><figure>${diagramSvg(data, lang)}<figcaption>${escape(text(data.diagram.caption, lang))}</figcaption></figure>${sections}<section><h2>${l.evidence}</h2><p class="note">${l.caution}</p><ul class="evidence">${evidence || `<li>${l.none}</li>`}</ul></section>${data.parent ? `<p><a href="../r${String(data.parent.revision).padStart(3, '0')}/report.html">${l.parent}: r${data.parent.revision}</a></p>` : ''}<section><h2>${l.resume}</h2><p class="prose">${escape(resume(data, lang))}</p></section></article>`;
 }
 export function renderHtml(data, at) {
@@ -140,13 +168,19 @@ function markdown(data, lang, at) {
   for (const r of data.requirements) lines.push(`- **${r.id}** — ${text(r.text, lang)} — ${status(r.status, lang)} — ${r.evidenceIds.join(', ') || '—'}`);
   lines.push('', `## ${l.diagram} · ${status(data.diagram.kind, lang)}`, '', `![${l.diagram}](diagram.${lang}.svg)`, '', text(data.diagram.caption, lang));
   SECTION_IDS.forEach((key, i) => lines.push('', `## ${headings[lang][i]}`, '', text(data.sections[key], lang)));
+  if (data.reviewEvidence) {
+    const review = reviewLabels[lang];
+    lines.push('', `## ${review.findings}`, '', `- ${review.reviewer}: ${data.reviewEvidence.reviewer}`, `- ${review.scope}: ${data.reviewEvidence.scope}`, '');
+    if (data.reviewEvidence.findings.length === 0) lines.push(review.none);
+    else for (const f of data.reviewEvidence.findings) lines.push(`- **${f.id}** — ${review.severity}: ${status(f.severity, lang)} — ${review.disposition}: ${status(f.disposition, lang)} — ${text(f.summary, lang)}`);
+  }
   lines.push('', `## ${l.evidence}`, '', l.caution, '');
   for (const e of data.evidence) lines.push(`- **${e.id}** — ${text(e.label, lang)} — ${status(e.status, lang)}`, `  - ${text(e.method, lang)}`, `  - ${e.reference}`);
   lines.push('', `## ${l.resume}`, '', resume(data, lang), '');
   return lines.join('\n');
 }
-export function generateReport(input, { project }) {
-  const data = validateReport(input), at = new Date().toISOString();
+function buildReport(input, { project, legacy = false }) {
+  const data = legacy ? validateLegacyReport(input) : validateReport(input), at = new Date().toISOString();
   const projectRoot = realpathSync(resolve(project));
   function ensureDirectory(parent, name) {
     const path = join(parent, name);
@@ -169,6 +203,7 @@ export function generateReport(input, { project }) {
     const parentPath = join(job, `r${String(data.parent.revision).padStart(3, '0')}`, 'report.json');
     assert(realpathSync(parentPath).startsWith(root + sep), 'Parent report must remain inside report root');
     const parent = JSON.parse(readFileSync(parentPath, 'utf8'));
+    validatePublishedReport(parent);
     assert(parent.jobId === data.jobId && parent.runId === data.parent.runId && parent.revision === data.parent.revision, 'Parent report identity mismatch');
   }
   const staging = mkdtempSync(join(job, '.report-'));
@@ -181,11 +216,15 @@ export function generateReport(input, { project }) {
     return { directory: target, path: `/reports/${data.jobId}/${revision}/report.html`, generatedAt: at };
   } catch (error) { rmSync(staging, { recursive: true, force: true }); throw error; }
 }
+export function generateReport(input, options) { return buildReport(input, options); }
+export function generateLegacyReport(input, options) { return buildReport(input, { ...options, legacy: true }); }
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try {
-    const args = process.argv.slice(2), opts = {};
+    const legacy = process.argv.includes('--legacy-v1');
+    const args = process.argv.slice(2).filter(arg => arg !== '--legacy-v1'), opts = {};
     for (let i = 0; i < args.length; i += 2) { assert(args[i]?.startsWith('--') && args[i + 1], 'Expected --input file --project directory'); opts[args[i].slice(2)] = args[i + 1]; }
     assert(opts.input && opts.project, 'Both --input and --project are required');
-    console.log(JSON.stringify(generateReport(JSON.parse(readFileSync(resolve(opts.input), 'utf8')), { project: opts.project })));
+    const generate = legacy ? generateLegacyReport : generateReport;
+    console.log(JSON.stringify(generate(JSON.parse(readFileSync(resolve(opts.input), 'utf8')), { project: opts.project })));
   } catch (error) { console.error(error.message); process.exitCode = 1; }
 }
