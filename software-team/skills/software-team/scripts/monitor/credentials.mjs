@@ -36,7 +36,7 @@ foreach ($entry in $paths) {
   $r = $rules[0]
   if ($r.IdentityReference.Value -ne $sid.Value -or $r.AccessControlType -ne 'Allow' -or $r.IsInherited -or $r.FileSystemRights -ne 'FullControl') { throw 'Unexpected ACL rule' }
 }
-} catch { [Console]::Error.WriteLine($stage); exit 1 }
+} catch { [Console]::Out.WriteLine('MONITOR_ACL_FAILURE:' + $stage + ':' + $_.Exception.GetType().Name + ':' + $_.FullyQualifiedErrorId); exit 1 }
 `;
 export function protectPaths(paths, {platform=process.platform, execute=spawnSync}={}) {
   const entries=paths.flatMap(path=>{
@@ -48,7 +48,7 @@ export function protectPaths(paths, {platform=process.platform, execute=spawnSyn
     const executable=join(process.env.SystemRoot||'C:\\Windows','System32','WindowsPowerShell','v1.0','powershell.exe');
     const result=execute(executable,['-NoLogo','-NoProfile','-NonInteractive','-EncodedCommand',Buffer.from(ACL_SCRIPT,'utf16le').toString('base64')],{windowsHide:true,encoding:'utf8',timeout:30000,env:{...process.env,TEAM_MONITOR_PRIVATE_PATHS:JSON.stringify(entries)}});
     if(result.error || result.status!==0){
-      const stage=/^(inspect|ownership|apply|verify)$/.test(result.stderr?.trim())?result.stderr.trim():'unavailable';
+      const stage=result.stdout?.match(/^MONITOR_ACL_FAILURE:((?:inspect|ownership|apply|verify):[A-Za-z0-9_.:, -]+)\r?$/m)?.[1]||'unavailable';
       throw new Error(`Cannot establish private Windows monitor ACLs (${stage})`);
     }
   } else {
