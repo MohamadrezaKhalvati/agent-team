@@ -8,7 +8,7 @@ import { validate } from './monitor.mjs';
 
 const REWORK_FROM = new Set(['review', 'verified', 'released']);
 const REWORK_TO = new Set(['planned', 'running']);
-const TERMINAL = new Set(['finished', 'verified', 'failed']);
+import { lifecycle } from './public/lifecycle.js';
 // Monitor-written timestamps are Date#toISOString() output. Accept only ISO 8601 with an explicit zone and a real calendar date.
 const ISO = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(?:Z|[+-](\d{2}):(\d{2}))$/i;
 function parseTimestamp(value) {
@@ -66,14 +66,15 @@ export function summarizeJournal(text) {
       run = newRun(event, time); runs.set(event.runId, run);
     } else if (!run) fail(`Invalid journal: seq ${event.seq} references run ${event.runId} that was never started`);
     if (time !== null && (run.lastAt === null || time > run.lastAt)) run.lastAt = time;
-    if (run.finished && event.type !== 'run.finished' && event.type !== 'task.updated') warn(event, 'Event recorded after run.finished');
+    const transition = lifecycle(run, event);
+    if (transition.warning) warn(event, transition.warning);
     if (event.source === 'command-wrapper') run.capturedEvents++; else run.agentEvents++;
 
+    if (transition.ignore) continue;
     switch (event.type) {
       case 'run.updated': if (!run.finished) run.status = event.status; break;
       case 'run.finished': {
-        if (run.finished) { warn(event, 'Duplicate run.finished ignored'); break; }
-        if (!TERMINAL.has(event.status)) { run.status = event.status; warn(event, `run.finished carried nonterminal status "${event.status}"; inconsistent source data, run treated as unfinished`); break; }
+        if (!transition.finish) { run.status = event.status; break; }
         run.status = event.status; run.finished = true; run.finishedAt = time;
         for (const task of run.tasks.values()) if (task.since !== null && time !== null) { increment(run.durations, task.status, time - task.since); task.since = null; task.closed = true; }
         break;
@@ -83,7 +84,6 @@ export function summarizeJournal(text) {
       case 'decision.recorded': run.decisions++; break;
       case 'evidence.recorded': run.evidence++; break;
       case 'task.updated': {
-        if (run.finished) { warn(event, 'Task update after run.finished ignored; final task snapshot unchanged'); break; }
         run.statusReports++;
         let task = run.tasks.get(event.taskId);
         if (!task) { task = { status: event.status, since: time, closed: false }; run.tasks.set(event.taskId, task); break; }

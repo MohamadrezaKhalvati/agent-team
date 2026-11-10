@@ -114,3 +114,14 @@ test('HTTP ingestion preserves split UTF-8 and rejects invalid bytes without per
  const lines=readFileSync(join(m.project,'.team-monitor/events.jsonl'),'utf8').trim().split('\n');
  assert.equal(lines.length,2);assert.equal(JSON.parse(lines[0]).title,event.title);
 });
+
+test('terminal lifecycle rejects state mutation and preserves late evidence',async t=>{
+ const m=await fixture(t);const send=e=>m.post({runId:'life',...e});
+ assert.equal((await send({type:'run.started',title:'Lifecycle'})).status,201);
+ assert.equal((await send({type:'run.finished',status:'running'})).status,400);
+ assert.equal((await send({type:'run.updated',status:'verified'})).status,400);
+ await send({type:'task.updated',taskId:'t',status:'review'});
+ await send({type:'run.finished',status:'verified'});
+ for(const e of [{type:'run.finished',status:'verified'},{type:'run.finished',status:'failed'},{type:'run.updated',status:'running'},{type:'task.updated',taskId:'t',status:'running'},{type:'agent.updated',agentId:'a',status:'working'}])assert.equal((await send(e)).status,400);
+ assert.equal((await send({type:'evidence.recorded',title:'Late verification details'})).status,201);
+});

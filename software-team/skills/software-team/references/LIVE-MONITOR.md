@@ -37,8 +37,8 @@ The server assigns sequence, timestamp, and provenance. Emit actual events as th
 | Type | Required fields and usage |
 | --- | --- |
 | run.started | Unique runId, title; optional summary |
-| run.updated | status: running, blocked, review, verified, failed, or finished; optional summary |
-| run.finished | Final status and honest result summary |
+| run.updated | status: running, blocked, or review; optional summary |
+| run.finished | Final status: verified, failed, or finished; honest result summary |
 | agent.updated | agentId, status: working, waiting, done, or blocked; title and role on first registration |
 | task.updated | taskId, status: planned, running, blocked, review, verified, or released; title and owner agentId on first registration |
 | message.sent | Actual sender agentId, recipient to, summary of a message actually sent or received |
@@ -69,3 +69,5 @@ To review workflow counts and durations afterwards, run `node <skill-directory>/
 Coverage includes explicit agent reports and wrapped command outcomes, not all host tool calls, unreported communications, hidden reasoning, or continuous autonomous execution. The monitor server heartbeat proves connection health, not agent liveness. The UI separately shows the age of team activity. After a host session ends, dashboard persistence depends on the process facility used; the monitor does not keep Codex working in the background.
 
 This pilot keeps the complete journal in memory and sends it on reconnect to preserve run/task state. It is intended for bounded local runs, not unlimited high-volume telemetry. Historical events remain on disk across normal restarts. Corrupt journals fail closed for inspection. Stop the monitor with Ctrl-C in its terminal or terminate its verified server PID when requested; never stop the whole application runtime.
+
+Run lifecycle: only `run.finished` completes a run. After its first valid terminal event, run, task and agent updates and additional completion events are rejected. Late messages, decisions, evidence, reports and captured command outcomes remain append-only evidence; they do not reopen state. Historical journals are never rewritten: invalid transitions produce visible dashboard/summary warnings, frozen state remains unchanged, and a historical nonterminal `run.finished` remains unfinished until a valid completion arrives. A retry of the terminal event needs its original event identity once idempotency is used.

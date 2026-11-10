@@ -383,3 +383,16 @@ test('untrusted timestamps cannot extend the observed span or open task interval
   ])).runs[0];
   assert.deepEqual(fresh.agentReported.tasks.stateDurationsMs, {});
 });
+
+
+test('dashboard projection and summary agree on historical anomalous lifecycle', async () => {
+ const { applyProjection } = await import('./public/lifecycle.js');
+ for(const terminal of ['finished','verified','failed','running']) {
+  const events=[{type:'run.started',runId:'x',title:'Historical'}, {type:'task.updated',runId:'x',taskId:'t',status:'review'}, {type:'run.finished',runId:'x',status:terminal}, {type:'run.updated',runId:'x',status:'blocked'}, {type:'task.updated',runId:'x',taskId:'t',status:'running'}, {type:'run.finished',runId:'x',status:'failed'}];
+  const text=journal(events.map((e,i)=>[i,e]));const runs=new Map();text.trim().split('\n').map(JSON.parse).forEach(e=>applyProjection(runs,e));
+  const projected=runs.get('x'), summary=summarizeJournal(text).runs[0];
+  assert.equal(projected.status,summary.status);assert.equal(projected.finished,summary.finished);
+  assert.deepEqual(summary.agentReported.tasks.finalStatusCounts,{[projected.tasks.get('t').status]:1});
+  assert.ok(projected.warnings.length);
+ }
+});

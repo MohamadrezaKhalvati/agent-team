@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { lifecycle, applyProjection } from './public/lifecycle.js';
 import http from 'node:http';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { mkdirSync, readFileSync, writeFileSync, appendFileSync, existsSync, chmodSync, openSync, closeSync, unlinkSync, realpathSync } from 'node:fs';
@@ -75,6 +76,7 @@ async function startUnlocked({project,port}) {
     try { events=lines.map((line,i)=>{const e=JSON.parse(line); if(e.seq!==i+1 || typeof e.at!=='string') fail('Invalid sequence'); validate(e,e.source); return e;}); }
     catch { fail('Event journal is invalid. Preserve it and repair or archive it before restarting.'); }
   }
+  const runs=new Map(); for(const event of events)applyProjection(runs,event);
   const token=randomBytes(32).toString('hex'), captureToken=randomBytes(32).toString('hex');
   const clients=new Set();
   let url='';
@@ -104,6 +106,8 @@ async function startUnlocked({project,port}) {
         const value=validate(JSON.parse(text),source);
         if(value.type==='run.started' && events.some(e=>e.runId===value.runId)) fail('Run already exists');
         if(value.type!=='run.started' && !events.some(e=>e.type==='run.started' && e.runId===value.runId)) fail('Run does not exist');
+        const transition=lifecycle(runs.get(value.runId),value);
+        if(transition.reject)fail(transition.warning);
         if(value.type==='report.ready') {
           for(const name of ['report.html','report.json','report.en.md','report.fa.md','diagram.en.svg','diagram.fa.svg']) reportFile(project,value.path.replace('report.html',name));
           const record=JSON.parse(readFileSync(reportFile(project,value.path.replace('report.html','report.json')),'utf8'));
@@ -112,7 +116,7 @@ async function startUnlocked({project,port}) {
           if(record.runId!==value.runId || record.jobId!==parts[2] || `r${String(record.revision).padStart(3,'0')}`!==parts[3]) fail('Report identity does not match event');
         }
         const event={...value,seq:events.length+1,at:new Date().toISOString()};
-        appendFileSync(journal,JSON.stringify(event)+'\n',{mode:0o600}); events.push(event);
+        appendFileSync(journal,JSON.stringify(event)+'\n',{mode:0o600}); events.push(event); applyProjection(runs,event);
         for(const client of clients)send(client,'update',event);
         res.writeHead(201,{'Content-Type':'application/json'}).end(JSON.stringify(event));
       } catch(error){res.writeHead(400,{'Content-Type':'application/json'}).end(JSON.stringify({error:error.message}));}
@@ -129,7 +133,7 @@ async function startUnlocked({project,port}) {
         res.end(readFileSync(target));
       }catch{res.writeHead(404).end('Report not found');}return;
     }
-    const files={'/':['index.html','text/html; charset=utf-8'],'/app.js':['app.js','text/javascript; charset=utf-8'],'/style.css':['style.css','text/css; charset=utf-8']};
+    const files={'/':['index.html','text/html; charset=utf-8'],'/app.js':['app.js','text/javascript; charset=utf-8'],'/lifecycle.js':['lifecycle.js','text/javascript; charset=utf-8'],'/style.css':['style.css','text/css; charset=utf-8']};
     if(req.method==='GET' && files[path]){ const [name,type]=files[path];res.setHeader('Content-Type',type);res.end(readFileSync(join(HERE,'public',name)));return; }
     res.writeHead(404).end('Not found');
   });
