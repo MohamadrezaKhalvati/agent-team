@@ -1,8 +1,9 @@
 #!/usr/bin/env node
+import { protectPaths } from './credentials.mjs';
 import { lifecycle, applyProjection } from './public/lifecycle.js';
 import http from 'node:http';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
-import { mkdirSync, readFileSync, writeFileSync, appendFileSync, existsSync, chmodSync, openSync, closeSync, unlinkSync, realpathSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync, appendFileSync, existsSync, openSync, closeSync, unlinkSync, realpathSync } from 'node:fs';
 import { resolve, dirname, join, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
@@ -49,7 +50,8 @@ function reportFile(project, reportPath) {
 }
 export async function startMonitor({project=process.cwd(),port=4317}={}) {
   project=resolve(project);
-  const dir=join(project,'.team-monitor'); mkdirSync(dir,{recursive:true,mode:0o700}); chmodSync(dir,0o700);
+  const dir=join(project,'.team-monitor'); mkdirSync(dir,{recursive:true,mode:0o700});
+  protectPaths([dir,...['connection.json','events.jsonl','writer.lock'].map(name=>join(dir,name))]);
   const lock=join(dir,'writer.lock');
   function acquire(){const fd=openSync(lock,'wx',0o600);try{writeFileSync(fd,JSON.stringify({pid:process.pid}));}finally{closeSync(fd);}}
   try{acquire();}catch(error){
@@ -69,7 +71,7 @@ export async function startMonitor({project=process.cwd(),port=4317}={}) {
 }
 async function startUnlocked({project,port}) {
   project=resolve(project);
-  const dir=join(project,'.team-monitor'); mkdirSync(dir,{recursive:true,mode:0o700}); chmodSync(dir,0o700);
+  const dir=join(project,'.team-monitor');
   const journal=join(dir,'events.jsonl'), connection=join(dir,'connection.json');
   let events=[],storageFailed=false;
   if(existsSync(journal)) {
@@ -83,8 +85,11 @@ async function startUnlocked({project,port}) {
     applyProjection(runs,event);
     if(event.eventId){if(identities.has(event.eventId))fail('Event journal has duplicate eventId; preserve and inspect it');identities.set(event.eventId,{event,payload:fingerprint(event)});}
   }
-  const token=randomBytes(32).toString('hex'), captureToken=randomBytes(32).toString('hex');
-  const clients=new Set();
+  const token=randomBytes(32).toString('hex'), captureToken=randomBytes(32).toString('hex'), readToken=randomBytes(32).toString('hex');
+  const sessions=new Map(), sessionLifetime=8*60*60*1000;
+  function sessionFor(req){const auth=req.headers.authorization;if(typeof auth!=='string' || !auth.startsWith('Bearer '))return;const key=auth.slice(7),session=sessions.get(key);if(session && session.expiresAt>Date.now())return {key,...session};if(session)sessions.delete(key);}
+  function canRead(req){return equal(req.headers.authorization,`Bearer ${readToken}`) || !!sessionFor(req);}
+  const clients=new Map();
   let url='';
   const snapshot=()=>({version:1,serverTime:new Date().toISOString(),project,events,totalEvents:events.length,coverage:'Agent-reported coordination and wrapped commands only. No hidden reasoning or automatic host-wide interception.'});
   function send(res,event,data){ if(res.writableLength>1024*1024){res.destroy();return;}res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`); }
@@ -97,9 +102,24 @@ async function startUnlocked({project,port}) {
     const origin=req.headers.origin;
     if((origin && ![url,`http://localhost:${expected.port}`].includes(origin)) || req.headers['sec-fetch-site']==='cross-site') {res.writeHead(403).end('Invalid origin');return;}
     let path;try{path=new URL(req.url,url).pathname;}catch{res.writeHead(400).end('Invalid URL');return;}
+    if(req.method==='POST' && path==='/api/session'){
+      if(!equal(req.headers.authorization,`Bearer ${readToken}`)){res.writeHead(401).end('Unauthorized');return;}
+      for(const [key,session] of sessions)if(session.expiresAt<=Date.now())sessions.delete(key);
+      if(sessions.size>=32){const oldest=sessions.keys().next().value;sessions.delete(oldest);for(const [client,auth] of clients)if(auth===`Bearer ${oldest}`){client.end();clients.delete(client);}}
+      const sessionToken=randomBytes(32).toString('hex'),expiresAt=Date.now()+sessionLifetime;
+      sessions.set(sessionToken,{expiresAt});
+      res.writeHead(201,{'Content-Type':'application/json'}).end(JSON.stringify({sessionToken,expiresAt}));return;
+    }
+    if(req.method==='DELETE' && path==='/api/session'){
+      const session=sessionFor(req);if(!session){res.writeHead(401).end('Unauthorized');return;}
+      sessions.delete(session.key);
+      for(const [client,auth] of clients)if(auth===req.headers.authorization){client.end();clients.delete(client);}
+      res.writeHead(204).end();return;
+    }
+    if((path==='/api/state' || path==='/api/stream' || path.startsWith('/reports/')) && !canRead(req)){res.writeHead(401).end('Unauthorized');return;}
     if(req.method==='GET' && path==='/api/state'){res.setHeader('Content-Type','application/json');res.end(JSON.stringify(snapshot()));return;}
     if(req.method==='GET' && path==='/api/stream'){
-      res.writeHead(200,{'Content-Type':'text/event-stream','Connection':'keep-alive'});clients.add(res);send(res,'snapshot',snapshot());
+      res.writeHead(200,{'Content-Type':'text/event-stream','Connection':'keep-alive'});clients.set(res,req.headers.authorization);send(res,'snapshot',snapshot());
       req.on('close',()=>clients.delete(res));return;
     }
     if(req.method==='POST' && path==='/api/events'){
@@ -132,7 +152,7 @@ async function startUnlocked({project,port}) {
         catch(error){storageFailed=true;throw error;}
         events.push(event); applyProjection(runs,event);
         if(event.eventId)identities.set(event.eventId,{event,payload:fingerprint(event)});
-        for(const client of clients)send(client,'update',event);
+        for(const [client,authorization] of clients){if(canRead({headers:{authorization}}))send(client,'update',event);else {client.end();clients.delete(client);}}
         res.writeHead(201,{'Content-Type':'application/json'}).end(JSON.stringify(event));
       } catch(error){res.writeHead(400,{'Content-Type':'application/json'}).end(JSON.stringify({error:error.message}));}
       return;
@@ -148,15 +168,18 @@ async function startUnlocked({project,port}) {
         res.end(readFileSync(target));
       }catch{res.writeHead(404).end('Report not found');}return;
     }
-    const files={'/':['index.html','text/html; charset=utf-8'],'/app.js':['app.js','text/javascript; charset=utf-8'],'/lifecycle.js':['lifecycle.js','text/javascript; charset=utf-8'],'/style.css':['style.css','text/css; charset=utf-8']};
+    const files={'/':['index.html','text/html; charset=utf-8'],'/app.js':['app.js','text/javascript; charset=utf-8'],'/lifecycle.js':['lifecycle.js','text/javascript; charset=utf-8'],'/stream.js':['stream.js','text/javascript; charset=utf-8'],'/style.css':['style.css','text/css; charset=utf-8']};
     if(req.method==='GET' && files[path]){ const [name,type]=files[path];res.setHeader('Content-Type',type);res.end(readFileSync(join(HERE,'public',name)));return; }
     res.writeHead(404).end('Not found');
   });
   await new Promise((ok,no)=>{server.once('error',no);server.listen(port,'127.0.0.1',ok);});
   url=`http://127.0.0.1:${server.address().port}`;
-  writeFileSync(connection,JSON.stringify({url,token,captureToken,pid:process.pid},null,2),{mode:0o600});chmodSync(connection,0o600);
-  const beat=setInterval(()=>{for(const client of clients)send(client,'heartbeat',{serverTime:new Date().toISOString()});},5000);beat.unref();
-  return {url,connection,server,close:async()=>{clearInterval(beat);for(const client of clients)client.end();await new Promise(ok=>server.close(ok));}};
+  try {
+    writeFileSync(connection,JSON.stringify({url,token,captureToken,readToken,pid:process.pid},null,2),{mode:0o600});
+    protectPaths([connection]);
+  } catch(error){await new Promise(ok=>server.close(ok));throw error;}
+  const beat=setInterval(()=>{for(const [client,authorization] of clients){if(canRead({headers:{authorization}}))send(client,'heartbeat',{serverTime:new Date().toISOString()});else {client.end();clients.delete(client);}}},5000);beat.unref();
+  return {url,connection,server,close:async()=>{clearInterval(beat);sessions.clear();for(const client of clients.keys())client.end();await new Promise(ok=>server.close(ok));}};
 }
 function options(args){const out={};for(let i=0;i<args.length;i++){if(args[i]==='--'){out.command=args.slice(i+1);break;}if(!args[i].startsWith('--') || !args[i+1]) fail('Expected --option value');out[args[i].slice(2)]=args[++i];}return out;}
 async function loadConnection(file){const c=JSON.parse(readFileSync(resolve(file),'utf8'));const u=new URL(c.url);if(u.protocol!=='http:' || u.hostname!=='127.0.0.1')fail('Connection must use loopback HTTP');return c;}

@@ -1,3 +1,4 @@
+import { readStream } from './stream.js';
 import { applyProjection } from './lifecycle.js';
 const projections=new Map(), runEvents=new Map(), sequences=new Set();
 function indexEvent(event){if(sequences.has(event.seq))return false;sequences.add(event.seq);let list=runEvents.get(event.runId);if(!list){list=[];runEvents.set(event.runId,list);}list.push(event);applyProjection(projections,event);return true;}
@@ -29,10 +30,54 @@ function renderReports(items){
  const root=$('reports-list');root.replaceChildren();const reports=items.filter(e=>e.type==='report.ready').reverse();
  if(!reports.length){root.append(el('div','empty','No reports published for this run yet. Reports appear when the team hands off its work.'));return;}
  for(const e of reports){const card=el('article','report-card');card.append(el('h3','',e.title),el('p','quiet',e.summary||'Bilingual technical report'));
- const links=el('div','report-links');for(const [file,label]of [['report.html','Open bilingual report ↗'],['report.en.md','English Markdown'],['report.fa.md','گزارش فارسی']]){const a=el('a','',label);a.href=e.path.replace('report.html',file);a.target='_blank';a.rel='noopener';a.dataset.focusKey=`report:${e.seq}:${file}`;links.append(a);}card.append(links,el('p','quiet',`${time(e.at)} · ${e.source}`));root.append(card);}
+ const links=el('div','report-links');for(const [file,label]of [['report.html','Open bilingual report ↗'],['report.en.md','English Markdown'],['report.fa.md','گزارش فارسی']]){const a=el('a','',label);a.href=e.path.replace('report.html',file);a.target='_blank';a.rel='noopener noreferrer';a.onclick=event=>openReport(event,a.href);a.dataset.focusKey=`report:${e.seq}:${file}`;links.append(a);}card.append(links,el('p','quiet',`${time(e.at)} · ${e.source}`));root.append(card);}
 }
 function renderActivity(){const q=$('search').value.toLowerCase();list('activity-list',[...current()].reverse().filter(e=>!q||JSON.stringify(e).toLowerCase().includes(q)),'No matching events.');}
 function updateHealth(){const connected=online&&Date.now()-lastHeartbeat<15000;$('connection').textContent=connected?'● Live connection':'○ Disconnected · reconnecting';$('connection').className='connection '+(connected?'live':'offline');$('side-dot').className='dot'+(connected?' online':'');$('side-status').textContent=connected?'Monitor connected':'Monitor disconnected';const e=current().at(-1);$('last-activity').textContent=time(e?.at);if(!e){$('activity-age').textContent='No activity recorded';return;}const seconds=Math.max(0,Math.floor((Date.now()-new Date(e.at).getTime())/1000));const ended=projections.get(runId)?.finished;$('activity-age').textContent=ended?'Run ended · historical activity':seconds>60?`No team update for ${Math.floor(seconds/60)}m · activity stale`:`${seconds}s ago · reported activity`;}
 function setView(next){view=next;for(const name of ['overview','activity','evidence','reports'])$(name+'-view').hidden=name!==view;for(const button of document.querySelectorAll('[data-view]')){const active=button.dataset.view===view;button.classList.toggle('active',active);button.setAttribute('aria-pressed',String(active));}requestAnimationFrame(drawEdges);}
 for(const n of document.querySelectorAll('[data-view]'))n.onclick=()=>setView(n.dataset.view);$('all-activity').onclick=()=>setView('activity');$('runs').onchange=e=>{runId=e.target.value;render();};$('search').oninput=renderActivity;$('close-detail').onclick=()=>$('detail').close();$('detail').addEventListener('close',()=>restoreFocus(openerKey));window.addEventListener('resize',drawEdges);setInterval(updateHealth,1000);
-const stream=new EventSource('/api/stream');stream.addEventListener('snapshot',e=>{const data=JSON.parse(e.data);events=data.events;projections.clear();runEvents.clear();sequences.clear();for(const event of events)indexEvent(event);total=data.totalEvents;online=true;lastHeartbeat=Date.now();$('project-path').textContent=data.project;render();});stream.addEventListener('update',e=>{const event=JSON.parse(e.data);if(!indexEvent(event))return;events.push(event);total=event.seq;online=true;lastHeartbeat=Date.now();render();});stream.addEventListener('heartbeat',()=>{online=true;lastHeartbeat=Date.now();updateHealth();});stream.onerror=()=>{online=false;updateHealth();};render();
+let sessionToken='',streamController;
+function receive(type,data){
+ if(type==='snapshot'){events=data.events;projections.clear();runEvents.clear();sequences.clear();for(const event of events)indexEvent(event);total=data.totalEvents;$('project-path').textContent=data.project;}
+ if(type==='update'){if(!indexEvent(data))return;events.push(data);total=data.seq;}
+ online=true;lastHeartbeat=Date.now();if(type==='heartbeat')updateHealth();else render();
+}
+function lock(message=''){
+ sessionToken='';streamController?.abort();online=false;events=[];total=0;projections.clear();runEvents.clear();sequences.clear();
+ $('detail').close();$('detail-content').textContent='';$('detail-title').textContent='';$('project-path').textContent='Monitor locked';$('dashboard').hidden=true;$('login').hidden=false;$('login-error').textContent=message;render();$('read-credential').focus();
+}
+async function connect(){
+ const credential=sessionToken,controller=new AbortController();streamController=controller;
+ while(sessionToken===credential && !controller.signal.aborted){
+  try{
+   const response=await fetch('/api/stream',{headers:{Authorization:`Bearer ${credential}`},signal:controller.signal});
+   if(response.status===401){lock('Session expired or monitor restarted. Connect again.');return;}
+   if(!response.ok)throw new Error('Stream unavailable');
+   await readStream(response,receive);
+  }catch{online=false;updateHealth();}
+  if(controller.signal.aborted)return;
+  await new Promise(resolve=>{const abort=()=>{clearTimeout(timer);resolve();},timer=setTimeout(()=>{controller.signal.removeEventListener('abort',abort);resolve();},1000);controller.signal.addEventListener('abort',abort,{once:true});});
+ }
+}
+$('login-form').onsubmit=async event=>{
+ event.preventDefault();let credential=$('read-credential').value;$('read-credential').value='';
+ try{
+  const request=fetch('/api/session',{method:'POST',headers:{Authorization:`Bearer ${credential}`}});credential='';
+  const response=await request;if(!response.ok)throw new Error('Unable to unlock. Check the current read credential.');
+  const session=await response.json();sessionToken=session.sessionToken;$('login').hidden=true;$('dashboard').hidden=false;$('login-error').textContent='';connect();
+ }catch(error){$('login-error').textContent=error.message;}
+};
+$('logout').onclick=async()=>{const credential=sessionToken;lock();try{await fetch('/api/session',{method:'DELETE',headers:{Authorization:`Bearer ${credential}`}});}catch{}};
+async function openReport(event,url){
+ event.preventDefault();if(new URL(url).origin!==location.origin)return;const target=window.open('about:blank','_blank');if(!target)return;target.opener=null;
+ try{
+  const response=await fetch(url,{headers:{Authorization:`Bearer ${sessionToken}`}});
+  if(!response.ok)throw new Error('Report unavailable or session expired');
+  const text=await response.text(),html=new URL(url).pathname.endsWith('.html');
+  if(html && !/<head>/i.test(text))throw new Error('Invalid report document');
+  const policy=`<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'">`;
+  const content=html?text.replace(/<head>/i,`<head>${policy}`):text;
+  const blob=URL.createObjectURL(new Blob([content],{type:html?'text/html;charset=utf-8':'text/plain;charset=utf-8'}));target.location.replace(blob);setTimeout(()=>URL.revokeObjectURL(blob),60000);
+ }catch(error){target.close();$('login-error').textContent=error.message;}
+}
+render();
