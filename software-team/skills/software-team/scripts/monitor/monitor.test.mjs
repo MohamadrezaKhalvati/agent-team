@@ -147,7 +147,7 @@ test('failed persistence leaves run index, sequence and published history unchan
  await m.post({type:'run.started',runId:'existing',title:'Existing'});
  renameSync(file,file+'.saved');mkdirSync(file);
  const event={type:'run.started',runId:'retry',title:'Retry after storage recovery'};
- assert.equal((await m.post(event)).status,400);
+ assert.equal((await m.post(event)).status,503);
  rmdirSync(file);renameSync(file+'.saved',file);
  assert.equal((await m.post(event)).status,503);
  const state=await(await read(m,'/api/state')).json();assert.equal(state.events.length,1);
@@ -208,12 +208,44 @@ test('sensitive reads require separate read authorization and session authority 
 test('partial append failure stops all writes and preserves evidence for inspection',async t=>{
  const m=await fixture(t),original=fs.appendFileSync;
  fs.appendFileSync=(file,data,options)=>{original(file,data.slice(0,20),options);throw Object.assign(new Error('Simulated partial write'),{code:'ENOSPC'});};syncBuiltinESMExports();
- try{assert.equal((await m.post({type:'run.started',runId:'partial',title:'Partial'})).status,400);}finally{fs.appendFileSync=original;syncBuiltinESMExports();}
+ try{assert.equal((await m.post({type:'run.started',runId:'partial',title:'Partial'})).status,503);}finally{fs.appendFileSync=original;syncBuiltinESMExports();}
  const file=join(m.project,'.team-monitor/events.jsonl'),before=readFileSync(file,'utf8');
  assert.equal((await m.post({type:'run.started',runId:'later',title:'Must not append'})).status,503);
  assert.equal(readFileSync(file,'utf8'),before);assert.equal((await(await read(m,'/api/state')).json()).events.length,0);
  await m.close();await assert.rejects(startMonitor({project:m.project,port:0}),/journal is invalid/);
  assert.equal(readFileSync(file,'utf8'),before);
+});
+
+test('partial append failure blocks an event already waiting for request body',async t=>{
+ const m=await fixture(t),originalAppend=fs.appendFileSync,proto=http.IncomingMessage.prototype,originalIterator=proto[Symbol.asyncIterator];
+ const stream=await read(m,'/api/stream'),reader=stream.body.getReader();await reader.read();
+ const responseProto=http.ServerResponse.prototype,originalWrite=responseProto.write;let published=0;
+ responseProto.write=function(chunk,...args){if(String(chunk).startsWith('event: update'))published++;return originalWrite.call(this,chunk,...args);};
+ let bodyStarted,releaseBody;const reachedBody=new Promise(resolve=>bodyStarted=resolve),bodyGate=new Promise(resolve=>releaseBody=resolve);
+ proto[Symbol.asyncIterator]=async function*(){
+  if(this.headers['x-test-body-barrier']){bodyStarted();await bodyGate;}
+  yield* originalIterator.call(this);
+ };
+ const appendCalls=[];
+ fs.appendFileSync=(file,data,options)=>{appendCalls.push(data);originalAppend(file,data.slice(0,20),options);throw Object.assign(new Error('Simulated partial write'),{code:'ENOSPC'});};syncBuiltinESMExports();
+ let delayed,sendBody;
+ try{
+  const body=JSON.stringify({type:'run.started',runId:'waiting',title:'Waiting'});
+  delayed=new Promise((resolve,reject)=>{const req=http.request(m.url+'/api/events',{method:'POST',headers:{Authorization:`Bearer ${m.c.token}`,'Content-Type':'application/json','X-Test-Body-Barrier':'yes'}},res=>{res.resume();res.on('end',()=>resolve(res.statusCode));});req.on('error',reject);req.flushHeaders();sendBody=()=>req.end(body);});
+  await reachedBody;
+  const failure=await m.post({type:'run.started',runId:'partial',title:'Partial'});
+  assert.equal(failure.status,503);
+  releaseBody();sendBody();
+  assert.equal(await delayed,503);
+ }finally{releaseBody();proto[Symbol.asyncIterator]=originalIterator;responseProto.write=originalWrite;fs.appendFileSync=originalAppend;syncBuiltinESMExports();}
+ const file=join(m.project,'.team-monitor/events.jsonl');
+ assert.equal(appendCalls.length,1);
+ assert.equal(published,0);await reader.cancel();
+ assert.equal((await(await read(m,'/api/state')).json()).events.length,0);
+ assert.equal(readFileSync(file,'utf8'),appendCalls[0].slice(0,20));
+ assert.equal((await m.post({type:'run.started',runId:'later',title:'Must not append'})).status,503);
+ assert.equal(appendCalls.length,1);
+ await m.close();await assert.rejects(startMonitor({project:m.project,port:0}),/journal is invalid/);
 });
 test('credential protection verifies platform permissions and fails closed',async t=>{
  const m=await fixture(t),dir=join(m.project,'.team-monitor');

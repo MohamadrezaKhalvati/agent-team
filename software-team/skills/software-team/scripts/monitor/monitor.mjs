@@ -128,6 +128,7 @@ async function startUnlocked({project,port}) {
       const chunks=[]; let size=0;
       try {
         for await(const chunk of req){size+=chunk.length;if(size>65536) fail('Event too large');chunks.push(chunk);}
+        if(storageFailed){res.writeHead(503).end('Journal write failed; restart after inspecting storage and journal');return;}
         const text=new TextDecoder('utf-8',{fatal:true}).decode(Buffer.concat(chunks,size));
         const source=equal(req.headers['x-capture-token'],captureToken)?'command-wrapper':'agent-reported';
         const value=validate(JSON.parse(text),source);
@@ -154,7 +155,7 @@ async function startUnlocked({project,port}) {
         if(event.eventId)identities.set(event.eventId,{event,payload:fingerprint(event)});
         for(const [client,authorization] of clients){if(canRead({headers:{authorization}}))send(client,'update',event);else {client.end();clients.delete(client);}}
         res.writeHead(201,{'Content-Type':'application/json'}).end(JSON.stringify(event));
-      } catch(error){res.writeHead(400,{'Content-Type':'application/json'}).end(JSON.stringify({error:error.message}));}
+      } catch(error){res.writeHead(storageFailed?503:400,{'Content-Type':'application/json'}).end(JSON.stringify({error:storageFailed?'Journal write failed; restart after inspecting storage and journal':error.message}));}
       return;
     }
     const reportMatch=path.match(/^\/reports\/([A-Za-z0-9][A-Za-z0-9_-]{0,79})\/(r[0-9]{3,4})\/(report\.html|report\.en\.md|report\.fa\.md|report\.json|diagram\.en\.svg|diagram\.fa\.svg)$/);
