@@ -97,6 +97,23 @@ test('publishes real report links with matching run identity and safe file bound
  assert.equal((await read(m,'/reports/job/r001/report.en.md')).status,404);
  assert.equal((await read(m,'/reports/job/r001/connection.json')).status,404);
 });
+test('authenticated reads preserve three report revisions and bilingual navigation artifacts',async t=>{
+ const m=await fixture(t),input=JSON.parse(readFileSync(join(HERE,'../../assets/report-input.example.json'),'utf8')),saved=[];
+ for(let revision=1;revision<=3;revision++){
+  const runId=`revision-${revision}`;assert.equal((await m.post({type:'run.started',runId,title:`Revision ${revision}`})).status,201);
+  const data={...input,jobId:'revision-job',revision,runId};if(revision>1)data.parent={revision:revision-1,runId:`revision-${revision-1}`};
+  const generated=generateReport(data,{project:m.project});saved.push(readFileSync(join(generated.directory,'report.html'),'utf8'));
+  assert.equal((await m.post({type:'report.ready',runId,title:`Report ${revision}`,path:generated.path})).status,201);
+  const response=await read(m,generated.path);assert.equal(response.status,200);const served=await response.text();assert.equal(served,saved.at(-1));
+  assert.match(served,/lang="en"/);assert.match(served,/lang="fa" dir="rtl"/);
+  if(revision>1)assert.ok(served.includes(`../r${String(revision-1).padStart(3,'0')}/report.html`));
+  for(const credential of [m.c.token,m.c.captureToken,m.c.readToken])assert.ok(!served.includes(credential));
+ }
+ for(let revision=1;revision<=3;revision++)assert.equal(readFileSync(join(m.project,'docs','team-reports','revision-job',`r${String(revision).padStart(3,'0')}`,'report.html'),'utf8'),saved[revision-1]);
+ assert.equal((await fetch(m.url+'/reports/revision-job/r001/report.html')).status,401);
+ assert.equal((await read(m,'/reports/revision-job/r001/report.html')).status,200);
+ assert.equal((await read(m,'/reports/revision-job/r003/../../../../.team-monitor/connection.json')).status,404);
+});
 
 async function chunkedPost(m, chunks) {
  return new Promise((ok,no)=>{

@@ -43,7 +43,7 @@ function receive(type,data){
  online=true;lastHeartbeat=Date.now();if(type==='heartbeat')updateHealth();else render();
 }
 function lock(message=''){
- sessionToken='';streamController?.abort();online=false;events=[];total=0;projections.clear();runEvents.clear();sequences.clear();
+ sessionToken='';streamController?.abort();for(const target of reportWindows)target.close();reportWindows.clear();online=false;events=[];total=0;projections.clear();runEvents.clear();sequences.clear();
  $('detail').close();$('detail-content').textContent='';$('detail-title').textContent='';$('project-path').textContent='Monitor locked';$('dashboard').hidden=true;$('login').hidden=false;$('login-error').textContent=message;render();$('read-credential').focus();
 }
 async function connect(){
@@ -68,16 +68,32 @@ $('login-form').onsubmit=async event=>{
  }catch(error){$('login-error').textContent=error.message;}
 };
 $('logout').onclick=async()=>{const credential=sessionToken;lock();try{await fetch('/api/session',{method:'DELETE',headers:{Authorization:`Bearer ${credential}`}});}catch{}};
+const reportWindows=new Set();
+function validReportPath(path){return typeof path==='string'&&/^\/reports\/[A-Za-z0-9][A-Za-z0-9_-]{0,79}\/r[0-9]{3,4}\/(?:report\.html|report\.en\.md|report\.fa\.md)$/.test(path);}
+function reportContent(text,path,html){
+ if(!html)return {content:text,type:'text/plain;charset=utf-8'};
+ if(!/<head>/i.test(text))throw new Error('Invalid report document');
+ const nonce=Array.from(crypto.getRandomValues(new Uint8Array(18)),b=>b.toString(16).padStart(2,'0')).join('');
+ const job=path.split('/')[2];
+ const script=`(()=>{const job=${JSON.stringify(job)};function note(text){const item=document.createElement('p');item.textContent=text;document.body.prepend(item);}document.addEventListener('click',event=>{const link=event.target.closest('a');if(!link)return;const href=link.getAttribute('href')||'';if(href==='#report-en'||href==='#report-fa')return;const previous=/^\\.\\.\\/(r[0-9]{3,4})\\/report\\.html$/.exec(href);if(!previous){event.preventDefault();note('Invalid report link.');return;}event.preventDefault();if(window.opener)window.opener.postMessage({type:'report-navigation',path:'/reports/'+job+'/'+previous[1]+'/report.html'},location.origin);else note('Return to the dashboard to open this revision.');});window.addEventListener('message',event=>{if(event.source!==window.opener||event.origin!==location.origin||event.data?.type!=='report-navigation-error')return;note('Report unavailable or session expired. Return to the dashboard and unlock again.');});})();`;
+ const policy=`<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'nonce-${nonce}'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'"><script nonce="${nonce}">${script}</script>`;
+ return {content:text.replace(/<head>/i,`<head>${policy}`),type:'text/html;charset=utf-8'};
+}
+async function showReport(target,path,credential){
+ if(!validReportPath(path)||!credential)throw new Error('Report unavailable or session expired');
+ const response=await fetch(path,{headers:{Authorization:`Bearer ${credential}`}});
+ if(!response.ok||sessionToken!==credential)throw new Error('Report unavailable or session expired');
+ const html=path.endsWith('.html'),{content,type}=reportContent(await response.text(),path,html);
+ const blob=URL.createObjectURL(new Blob([content],{type}));target.location.replace(blob);setTimeout(()=>URL.revokeObjectURL(blob),60000);
+}
+window.addEventListener('message',async event=>{
+ if(event.origin!==location.origin||!reportWindows.has(event.source)||event.data?.type!=='report-navigation')return;
+ const path=event.data.path;if(!validReportPath(path))return;
+ try{await showReport(event.source,path,sessionToken);}catch{event.source.postMessage({type:'report-navigation-error'},location.origin);}
+});
 async function openReport(event,url){
- event.preventDefault();if(new URL(url).origin!==location.origin)return;const target=window.open('about:blank','_blank');if(!target)return;target.opener=null;
- try{
-  const response=await fetch(url,{headers:{Authorization:`Bearer ${sessionToken}`}});
-  if(!response.ok)throw new Error('Report unavailable or session expired');
-  const text=await response.text(),html=new URL(url).pathname.endsWith('.html');
-  if(html && !/<head>/i.test(text))throw new Error('Invalid report document');
-  const policy=`<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'">`;
-  const content=html?text.replace(/<head>/i,`<head>${policy}`):text;
-  const blob=URL.createObjectURL(new Blob([content],{type:html?'text/html;charset=utf-8':'text/plain;charset=utf-8'}));target.location.replace(blob);setTimeout(()=>URL.revokeObjectURL(blob),60000);
- }catch(error){target.close();$('login-error').textContent=error.message;}
+ event.preventDefault();let parsed;try{parsed=new URL(url,location.href);}catch{return;}if(parsed.origin!==location.origin||!validReportPath(parsed.pathname))return;
+ const target=window.open('about:blank','_blank');if(!target){$('login-error').textContent='Allow a new tab to open this report.';return;}reportWindows.add(target);
+ try{await showReport(target,parsed.pathname,sessionToken);}catch(error){reportWindows.delete(target);target.close();$('login-error').textContent=error.message;}
 }
 render();
