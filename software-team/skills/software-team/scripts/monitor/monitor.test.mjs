@@ -91,3 +91,26 @@ test('publishes real report links with matching run identity and safe file bound
  assert.equal((await fetch(m.url+'/reports/job/r001/report.en.md')).status,404);
  assert.equal((await fetch(m.url+'/reports/job/r001/connection.json')).status,404);
 });
+
+async function chunkedPost(m, chunks) {
+ return new Promise((ok,no)=>{
+  const req=http.request(m.url+'/api/events',{method:'POST',headers:{Authorization:`Bearer ${m.c.token}`}},res=>{let body='';res.on('data',b=>body+=b);res.on('end',()=>ok({status:res.statusCode,body}));});
+  req.on('error',no);
+  (async()=>{for(const chunk of chunks){req.write(chunk);await new Promise(r=>setTimeout(r,10));}req.end();})().catch(no);
+ });
+}
+test('HTTP ingestion preserves split UTF-8 and rejects invalid bytes without persistence',async t=>{
+ const m=await fixture(t);
+ const event={type:'run.started',runId:'unicode',title:'سلام 🌍',summary:'آزمایش 日本語',details:'é فارسی'};
+ const bytes=Buffer.from(JSON.stringify(event)), split=bytes.indexOf(Buffer.from('س'))+1;
+ const r=await chunkedPost(m,[bytes.subarray(0,split),bytes.subarray(split,split+2),bytes.subarray(split+2)]);
+ assert.equal(r.status,201);const accepted=JSON.parse(r.body);
+ for(const key of ['title','summary','details'])assert.equal(accepted[key],event[key]);
+ const bad=Buffer.concat([Buffer.from('{"type":"run.started","runId":"bad","title":"'),Buffer.from([0xc3,0x28]),Buffer.from('"}')]);
+ assert.equal((await chunkedPost(m,[bad])).status,400);
+ assert.equal((await chunkedPost(m,[Buffer.from('{broken')])).status,400);
+ assert.equal((await chunkedPost(m,[Buffer.from(' '.repeat(65537))])).status,400);
+ assert.equal((await m.post({...event,runId:'complete'})).status,201);
+ const lines=readFileSync(join(m.project,'.team-monitor/events.jsonl'),'utf8').trim().split('\n');
+ assert.equal(lines.length,2);assert.equal(JSON.parse(lines[0]).title,event.title);
+});

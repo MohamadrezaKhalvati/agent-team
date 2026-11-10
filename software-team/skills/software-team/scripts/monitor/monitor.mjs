@@ -96,9 +96,10 @@ async function startUnlocked({project,port}) {
     }
     if(req.method==='POST' && path==='/api/events'){
       if(!equal(req.headers.authorization,`Bearer ${token}`)){res.writeHead(401).end('Unauthorized');return;}
-      let text='';
+      const chunks=[]; let size=0;
       try {
-        for await(const chunk of req){text+=chunk;if(Buffer.byteLength(text)>65536) fail('Event too large');}
+        for await(const chunk of req){size+=chunk.length;if(size>65536) fail('Event too large');chunks.push(chunk);}
+        const text=new TextDecoder('utf-8',{fatal:true}).decode(Buffer.concat(chunks,size));
         const source=equal(req.headers['x-capture-token'],captureToken)?'command-wrapper':'agent-reported';
         const value=validate(JSON.parse(text),source);
         if(value.type==='run.started' && events.some(e=>e.runId===value.runId)) fail('Run already exists');
