@@ -7,7 +7,7 @@ import { mkdirSync, readFileSync, writeFileSync, appendFileSync, existsSync, ope
 import { resolve, dirname, join, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
-import { validateReport } from '../reports/report.mjs';
+import { validatePublishedReport } from '../reports/report.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const TYPES = new Set(['run.started','run.updated','run.finished','agent.updated','task.updated','message.sent','decision.recorded','evidence.recorded','report.ready','command.started','command.finished']);
@@ -144,7 +144,7 @@ async function startUnlocked({project,port}) {
         if(value.type==='report.ready') {
           for(const name of ['report.html','report.json','report.en.md','report.fa.md','diagram.en.svg','diagram.fa.svg']) reportFile(project,value.path.replace('report.html',name));
           const record=JSON.parse(readFileSync(reportFile(project,value.path.replace('report.html','report.json')),'utf8'));
-          validateReport(record);
+          validatePublishedReport(record);
           const parts=value.path.split('/');
           if(record.runId!==value.runId || record.jobId!==parts[2] || `r${String(record.revision).padStart(3,'0')}`!==parts[3]) fail('Report identity does not match event');
         }

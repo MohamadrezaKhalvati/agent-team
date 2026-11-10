@@ -8,7 +8,7 @@ Produce all of the following from one structured factual record:
 
 - `report.html`: a standalone, offline-readable report containing full English and Persian articles, language links, RTL Persian layout, acceptance visualization, and a meaningful architecture or workflow diagram.
 - `report.en.md` and `report.fa.md`: complete counterparts, not an English report plus a Persian summary.
-- `report.json`: shared requirement/evidence IDs, code and run identity, technical/release/review status, parent revision, findings and continuation context.
+- `report.json`: shared requirement/evidence IDs, code and run identity, technical/release/review status, parent revision, findings and continuation context. New evidence records use evidence format v2; previously valid format v1 inputs and published revisions remain readable as legacy evidence.
 - `diagram.en.svg` and `diagram.fa.svg`: language-appropriate diagram assets used by Markdown.
 
 Store each revision at `<project>/docs/team-reports/<job-id>/r001/`, then `r002/`, etc. Use the report builder to avoid overwriting prior reports. These are reviewable deliverables, separate from private `.team-monitor/` runtime data. Keep secrets, raw private telemetry, sensitive records, and access tokens out of reports. Follow the host's permitted output locations when linking deliverables in chat.
@@ -40,11 +40,28 @@ Use the same stable IDs, statuses, numbers, evidence references and substantive 
 node <skill-directory>/scripts/reports/report.mjs --input <prepared-input.json> --project <absolute-project>
 ```
 
+New report input must explicitly set `evidenceVersion: 2`; the CLI and `generateReport()` reject missing or legacy versions. To regenerate a valid format-v1 input for compatibility, use the exported `generateLegacyReport()` or pass `--legacy-v1` to the CLI. This path rejects v2 bindings and labels every output as legacy/unbound. Published v1 reports remain readable, and a new v2 revision may name a published v1 revision as its parent.
+
 4. Open the HTML and inspect both languages, diagram, overflow, evidence, and continuation instructions. Check full-content alignment, not merely that both headings exist. Correct the input before publication; if an immutable generated revision needs correction, issue a new revision rather than silently overwriting it.
 5. After successful generation and content review, emit a `report.ready` monitor event with the same runId, a concise title/summary, and the generated `/reports/<job-id>/r001/report.html` path. The monitor verifies that files exist and run identity matches. Reports appear in **Job reports**, including links to both Markdown versions.
 6. Record final task states and `run.finished` only after report handoff. In the final reply, link the HTML, Persian and English files, monitor URL, remaining blockers and how to request revisions. Keep the chat summary concise; the files hold the comprehensive report.
 
 The report is an immutable snapshot, not a live promise: later code changes can invalidate its evidence. A verified technical status requires independent review and all listed acceptance criteria met; partial or blocked work must remain labeled accurately. User acceptance and production approval remain separate.
+
+## Evidence binding for new reports
+
+New report inputs set `evidenceVersion: 2` and include:
+
+- `snapshot`: immutable `baseSha`, `headSha`, and SHA-256 `diffSha256` for the delivered diff.
+- `verificationEnvironment`: the actual runtime and platform used for checks.
+- `evidence[]`: each check keeps its actual outcome (`passed`, `failed`, `not-run`, or `inconclusive`), method/command, reference, and environment when executed. Executed evidence carries the same base/head/diff basis as the delivered snapshot. Check outcomes do not imply an independent review.
+- `reviewEvidence`: when `reviewStatus` is `independent`, the real reviewer, matching base/head/diff identities, scope, and findings with dispositions.
+
+For a requirement marked `met`, every linked `evidenceId` is a required check and must have a current `passed` result. A linked failed, inconclusive, or not-run result blocks `met` and any verified claim. Partial and blocked reports may preserve mixed outcomes. The format does not support superseding check attempts; rerun the required check and record the result against the delivered snapshot.
+
+For v2, `technicalStatus: "verified"` is accepted only when independent review evidence and all executed check evidence match the delivered snapshot and listed criteria are met. If the delivered diff changes materially after review, update the snapshot and reopen affected review and checks; carry prior evidence forward only with an explicit unchanged scope and basis. A passing check set with review pending remains `implemented`, with review status pending; it is not technically verified. Do not use a dirty-worktree marker or a moving `HEAD` alone as review identity. Structured review findings use bilingual summaries and are rendered, with ID, severity, and disposition, in the HTML and both Markdown reports.
+
+Format v1 remains the legacy interpretation for inputs without `evidenceVersion`. The explicit compatibility path labels generated legacy records `evidenceVersion: 1` and marks them unbound in rendered reports. New legacy generation still requires every check linked to a `met` criterion to pass; previously published v1 records remain readable with their original interpretation. Do not use v1 evidence to support a new verified claim; new verification evidence must use v2.
 
 ## Apply user feedback to the same job
 
