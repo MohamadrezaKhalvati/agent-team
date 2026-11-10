@@ -15,7 +15,7 @@ Inspect the project's existing instructions, relevant code, requirements, decisi
 
 ## Live monitoring
 
-For spec, feature, and module execution, follow [the live monitor workflow](references/LIVE-MONITOR.md). Start or reuse the local monitor, present its actual URL before implementation, and instrument actual assignments, messages, task transitions, decisions, and evidence throughout execution. Use the command wrapper for relevant checks. Report any telemetry gaps honestly. Monitoring does not create delegation capability or an independent background Codex runtime.
+For spec, feature, and module execution, follow [the live monitor workflow](references/LIVE-MONITOR.md). Start or reuse the local monitor, present its actual URL before implementation (the user unlocks it with the private read credential; never print credentials), and instrument actual assignments, messages, task transitions, decisions, and evidence throughout execution. Use the command wrapper for relevant checks. Report any telemetry gaps honestly. Monitoring does not create delegation capability or an independent background Codex runtime.
 
 ## Size the work and choose the team
 
