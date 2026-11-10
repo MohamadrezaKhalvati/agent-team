@@ -2,7 +2,7 @@ import test from 'node:test';
 import http from 'node:http';
 import net from 'node:net';
 import assert from 'node:assert/strict';
-import { mkdtempSync,readFileSync,writeFileSync,statSync, mkdirSync, symlinkSync, unlinkSync } from 'node:fs';
+import { mkdtempSync,readFileSync,writeFileSync,statSync, renameSync, rmdirSync, mkdirSync, symlinkSync, unlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join,dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -124,4 +124,26 @@ test('terminal lifecycle rejects state mutation and preserves late evidence',asy
  await send({type:'run.finished',status:'verified'});
  for(const e of [{type:'run.finished',status:'verified'},{type:'run.finished',status:'failed'},{type:'run.updated',status:'running'},{type:'task.updated',taskId:'t',status:'running'},{type:'agent.updated',agentId:'a',status:'working'}])assert.equal((await send(e)).status,400);
  assert.equal((await send({type:'evidence.recorded',title:'Late verification details'})).status,201);
+});
+
+test('run lookup does not scan long history on ingestion',async t=>{
+ const m=await fixture(t);await m.post({type:'run.started',runId:'indexed',title:'Indexed'});
+ for(let i=0;i<20;i++)await m.post({type:'decision.recorded',runId:'indexed',title:'History'});
+ const original=Array.prototype.some;let visits=0;
+ Array.prototype.some=function(fn,...args){return original.call(this,(e,...rest)=>{if(e?.runId==='indexed' && e?.seq)visits++;return fn(e,...rest);},...args);};
+ try {assert.equal((await m.post({type:'decision.recorded',runId:'indexed',title:'Lookup'})).status,201);}finally{Array.prototype.some=original;}
+ assert.equal(visits,0,'run existence must use the index');
+});
+
+
+test('failed persistence leaves run index, sequence and published history unchanged',async t=>{
+ const m=await fixture(t),file=join(m.project,'.team-monitor/events.jsonl');
+ await m.post({type:'run.started',runId:'existing',title:'Existing'});
+ renameSync(file,file+'.saved');mkdirSync(file);
+ const event={type:'run.started',runId:'retry',title:'Retry after storage recovery'};
+ assert.equal((await m.post(event)).status,400);
+ rmdirSync(file);renameSync(file+'.saved',file);
+ const response=await m.post(event);assert.equal(response.status,201);assert.equal((await response.json()).seq,2);
+ assert.equal((await m.post(event)).status,400);
+ assert.equal((await m.post({type:'task.updated',runId:'missing',taskId:'x',status:'running'})).status,400);
 });

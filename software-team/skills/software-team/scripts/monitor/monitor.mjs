@@ -104,8 +104,8 @@ async function startUnlocked({project,port}) {
         const text=new TextDecoder('utf-8',{fatal:true}).decode(Buffer.concat(chunks,size));
         const source=equal(req.headers['x-capture-token'],captureToken)?'command-wrapper':'agent-reported';
         const value=validate(JSON.parse(text),source);
-        if(value.type==='run.started' && events.some(e=>e.runId===value.runId)) fail('Run already exists');
-        if(value.type!=='run.started' && !events.some(e=>e.type==='run.started' && e.runId===value.runId)) fail('Run does not exist');
+        if(value.type==='run.started' && runs.has(value.runId)) fail('Run already exists');
+        if(value.type!=='run.started' && !runs.has(value.runId)) fail('Run does not exist');
         const transition=lifecycle(runs.get(value.runId),value);
         if(transition.reject)fail(transition.warning);
         if(value.type==='report.ready') {
